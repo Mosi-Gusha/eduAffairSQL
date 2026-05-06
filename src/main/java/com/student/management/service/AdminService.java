@@ -1,0 +1,574 @@
+package com.student.management.service;
+
+import java.io.File;
+import java.lang.management.ManagementFactory;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.util.Enumeration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.student.management.common.ApiException;
+import com.student.management.common.MapUtil;
+import com.student.management.common.PasswordUtil;
+import com.student.management.common.RedisCacheService;
+import com.student.management.dto.CourseRequest;
+import com.student.management.dto.CreateOfferingRequest;
+import com.student.management.dto.CreateUserRequest;
+import com.student.management.dto.NoticeRequest;
+import com.student.management.dto.SemesterRequest;
+import com.student.management.dto.StudentProfileRequest;
+import com.student.management.dto.TeacherRequest;
+import com.student.management.mapper.AdminMapper;
+import com.student.management.mapper.CommonMapper;
+import com.student.management.security.SessionUser;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class AdminService {
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
+    };
+    private static final TypeReference<List<Map<String, Object>>> LIST_TYPE = new TypeReference<>() {
+    };
+
+    private final AdminMapper adminMapper;
+    private final CommonMapper commonMapper;
+    private final RedisCacheService cache;
+
+    public AdminService(AdminMapper adminMapper, CommonMapper commonMapper, RedisCacheService cache) {
+        this.adminMapper = adminMapper;
+        this.commonMapper = commonMapper;
+        this.cache = cache;
+    }
+
+    public Map<String, Object> dashboard() {
+        return mapOf(
+                "summary", List.of(
+                        item("系统用户", adminMapper.countUsers()),
+                        item("启用课程", adminMapper.countEnabledCourses()),
+                        item("开课计划", adminMapper.countOfferings()),
+                        item("有效选课", adminMapper.countSelectedEnrollments())
+                ),
+                "systemStatus", systemStatus(),
+                "notices", commonMapper.listRecentNotices("admin", 5)
+        );
+    }
+
+    public List<Map<String, Object>> listUsers() {
+        return cache.get("admin:users", LIST_TYPE, adminMapper::listUsers);
+    }
+
+    @Transactional
+    public Map<String, Object> createUser(CreateUserRequest request) {
+        if ("admin".equals(request.role())) {
+            throw new ApiException(400, "系统管理员账号只有一个，不能新增管理员");
+        }
+        Long roleId = adminMapper.roleIdByCode(request.role());
+        if (roleId == null) {
+            throw new ApiException(400, "角色不存在");
+        }
+        adminMapper.insertUser(
+                request.username(),
+                PasswordUtil.sha256(request.password()),
+                request.displayName(),
+                defaultEmail(request.username(), request.role()),
+                roleId
+        );
+        clearTeachingCaches();
+        return message("用户已创建");
+    }
+
+    public List<Map<String, Object>> listTeachers(String keyword) {
+        return cache.get("admin:teachers:" + cache.keyPart(keyword), LIST_TYPE,
+                () -> adminMapper.listTeachers(keyword));
+    }
+
+    @Transactional
+    public Map<String, Object> createTeacher(TeacherRequest request) {
+        Long roleId = adminMapper.roleIdByCode("teacher");
+        adminMapper.insertUser(request.teacherNo(), PasswordUtil.sha256(request.teacherNo()), request.name(), request.email(), roleId);
+        Long userId = adminMapper.userIdByUsername(request.teacherNo());
+        adminMapper.insertTeacher(userId, request);
+        clearTeachingCaches();
+        return message("教师已新增，初始密码为教师号");
+    }
+
+    @Transactional
+    public Map<String, Object> updateTeacher(Long teacherId, TeacherRequest request) {
+        Long userId = adminMapper.teacherUserId(teacherId);
+        if (userId == null) {
+            throw new ApiException(404, "教师不存在");
+        }
+        adminMapper.updateUserIdentity(userId, request.teacherNo(), request.name());
+        adminMapper.updateUserEmail(userId, request.email());
+        adminMapper.updateTeacher(teacherId, request);
+        clearTeachingCaches();
+        return message("教师信息已更新");
+    }
+
+    @Transactional
+    public Map<String, Object> deleteTeacher(Long teacherId) {
+        Long userId = adminMapper.teacherUserId(teacherId);
+        if (userId == null) {
+            throw new ApiException(404, "教师不存在");
+        }
+        adminMapper.disableUser(userId);
+        clearTeachingCaches();
+        return message("教师账号已删除");
+    }
+
+    public List<Map<String, Object>> listStudents(String keyword) {
+        return cache.get("admin:students:" + cache.keyPart(keyword), LIST_TYPE,
+                () -> adminMapper.listStudents(keyword));
+    }
+
+    @Transactional
+    public Map<String, Object> createStudent(StudentProfileRequest request) {
+        Long roleId = adminMapper.roleIdByCode("student");
+        adminMapper.insertUser(request.studentNo(), PasswordUtil.sha256(request.studentNo()), request.name(),
+                request.email(), roleId);
+        Long userId = adminMapper.userIdByUsername(request.studentNo());
+        adminMapper.insertStudent(userId, request);
+        clearTeachingCaches();
+        return message("学生已新增，初始密码为学号");
+    }
+
+    @Transactional
+    public Map<String, Object> updateStudent(Long studentId, StudentProfileRequest request) {
+        Long userId = adminMapper.studentUserId(studentId);
+        if (userId == null) {
+            throw new ApiException(404, "学生不存在");
+        }
+        adminMapper.updateUserIdentity(userId, request.studentNo(), request.name());
+        adminMapper.updateUserEmail(userId, request.email());
+        adminMapper.updateStudent(studentId, request);
+        clearTeachingCaches();
+        return message("学生信息已更新");
+    }
+
+    @Transactional
+    public Map<String, Object> deleteStudent(Long studentId) {
+        Long userId = adminMapper.studentUserId(studentId);
+        if (userId == null) {
+            throw new ApiException(404, "学生不存在");
+        }
+        adminMapper.disableUser(userId);
+        clearTeachingCaches();
+        return message("学生账号已删除");
+    }
+
+    @Transactional
+    public Map<String, Object> resetPassword(Long userId) {
+        String username = adminMapper.usernameById(userId);
+        if (username == null) {
+            throw new ApiException(404, "用户不存在");
+        }
+        adminMapper.resetPassword(userId);
+        return message("密码已重置为账号：" + username);
+    }
+
+    @Transactional
+    public Map<String, Object> deleteUser(SessionUser currentUser, Long userId) {
+        if (currentUser.id().equals(userId)) {
+            throw new ApiException(400, "不能删除当前登录账号");
+        }
+        String role = adminMapper.roleCodeByUserId(userId);
+        if (role == null) {
+            throw new ApiException(404, "用户不存在");
+        }
+        if ("admin".equals(role)) {
+            throw new ApiException(400, "系统管理员账号只有一个，不能删除");
+        }
+        adminMapper.disableUser(userId);
+        clearTeachingCaches();
+        return message("用户已删除");
+    }
+
+    public Map<String, Object> catalog() {
+        return cache.get("admin:catalog", MAP_TYPE, () -> {
+            Map<String, Object> currentSemester = commonMapper.currentSemester();
+            return mapOf(
+                    "semesters", adminMapper.semesters(),
+                    "departments", adminMapper.departments(),
+                    "majors", adminMapper.majors(),
+                    "teachers", adminMapper.teachers(),
+                    "courses", adminMapper.courses(),
+                    "classrooms", adminMapper.classrooms(),
+                    "currentSemester", currentSemester,
+                    "selectionOpen", selectionOpen()
+            );
+        });
+    }
+
+    public List<Map<String, Object>> listOfferings(String keyword, boolean currentOnly) {
+        return cache.get("admin:offerings:" + currentOnly + ":" + cache.keyPart(keyword), LIST_TYPE,
+                () -> adminMapper.listOfferings(keyword, currentOnly));
+    }
+
+    public List<Map<String, Object>> listCourses(String keyword) {
+        return cache.get("admin:courses:" + cache.keyPart(keyword), LIST_TYPE,
+                () -> adminMapper.listCourses(keyword));
+    }
+
+    @Transactional
+    public Map<String, Object> createCourse(CourseRequest request) {
+        adminMapper.insertCourse(request);
+        clearTeachingCaches();
+        return message("课程已新增");
+    }
+
+    @Transactional
+    public Map<String, Object> enableCourse(Long courseId) {
+        int updated = adminMapper.updateCourseStatus(courseId, "enabled");
+        if (updated == 0) {
+            throw new ApiException(404, "课程不存在");
+        }
+        clearTeachingCaches();
+        return message("课程已启用");
+    }
+
+    @Transactional
+    public Map<String, Object> disableCourse(Long courseId) {
+        int updated = adminMapper.updateCourseStatus(courseId, "disabled");
+        if (updated == 0) {
+            throw new ApiException(404, "课程不存在");
+        }
+        clearTeachingCaches();
+        return message("课程已弃用");
+    }
+
+    @Transactional
+    public Map<String, Object> createOffering(CreateOfferingRequest request) {
+        if (request.startSection() > request.endSection()) {
+            throw new ApiException(400, "开始节次不能大于结束节次");
+        }
+        validateCourseForNewOffering(request.courseId());
+        validateRatio(request.usualRatio(), request.examRatio());
+        adminMapper.insertOffering(request);
+        clearTeachingCaches();
+        return message("开课计划已创建");
+    }
+
+    @Transactional
+    public Map<String, Object> updateOffering(Long offeringId, CreateOfferingRequest request) {
+        if (request.startSection() > request.endSection()) {
+            throw new ApiException(400, "开始节次不能大于结束节次");
+        }
+        validateRatio(request.usualRatio(), request.examRatio());
+        adminMapper.updateOffering(offeringId, request);
+        clearTeachingCaches();
+        return message("课程信息已更新");
+    }
+
+    @Transactional
+    public Map<String, Object> deleteOffering(Long offeringId) {
+        adminMapper.deleteAttendanceByOffering(offeringId);
+        adminMapper.deleteGradesByOffering(offeringId);
+        adminMapper.deleteEnrollmentsByOffering(offeringId);
+        adminMapper.deleteOffering(offeringId);
+        clearTeachingCaches();
+        return message("课程班已删除，相关选课和成绩记录已一并清除");
+    }
+
+    @Transactional
+    public Map<String, Object> setCurrentSemester(Long semesterId) {
+        Map<String, Object> semester = adminMapper.semesterById(semesterId);
+        if (semester == null) {
+            throw new ApiException(404, "学期不存在");
+        }
+        adminMapper.clearCurrentSemester();
+        adminMapper.setCurrentSemester(semesterId);
+        clearTeachingCaches();
+        return message("当前学期已切换");
+    }
+
+    @Transactional
+    public Map<String, Object> createSemester(SemesterRequest request) {
+        adminMapper.clearCurrentSemester();
+        adminMapper.insertSemester(request);
+        clearTeachingCaches();
+        return message("学期已新建，可开始维护该学期课程");
+    }
+
+    @Transactional
+    public Map<String, Object> updateSemester(Long semesterId, SemesterRequest request) {
+        int updated = adminMapper.updateSemester(semesterId, request);
+        if (updated == 0) {
+            throw new ApiException(400, "学期不存在");
+        }
+        clearTeachingCaches();
+        return message("学期信息已更新");
+    }
+
+    public List<Map<String, Object>> enrollmentReport() {
+        return cache.get("admin:enrollment-report", LIST_TYPE, adminMapper::enrollmentReport);
+    }
+
+    public List<Map<String, Object>> courseRoster(Long offeringId) {
+        return cache.get("admin:course-roster:" + offeringId, LIST_TYPE,
+                () -> adminMapper.courseRoster(offeringId));
+    }
+
+    @Transactional
+    public Map<String, Object> adminSelectCourse(String studentNo, Long offeringId) {
+        Long studentId = adminMapper.studentIdByNoOrUsername(studentNo);
+        if (studentId == null) {
+            throw new ApiException(404, "学生不存在");
+        }
+        adminMapper.adminSelectCourse(studentId, offeringId);
+        clearTeachingCaches();
+        return message("已为学生选课");
+    }
+
+    @Transactional
+    public Map<String, Object> adminDropCourse(String studentNo, Long offeringId) {
+        Long studentId = adminMapper.studentIdByNoOrUsername(studentNo);
+        if (studentId == null) {
+            throw new ApiException(404, "学生不存在");
+        }
+        adminMapper.adminDropCourse(studentId, offeringId);
+        clearTeachingCaches();
+        return message("已为学生退课");
+    }
+
+    @Transactional
+    public Map<String, Object> adminDropEnrollment(Long enrollmentId) {
+        int updated = adminMapper.adminDropEnrollment(enrollmentId);
+        clearTeachingCaches();
+        if (updated == 0) {
+            throw new ApiException(400, "未找到有效选课记录");
+        }
+        return message("已退选");
+    }
+
+    public Map<String, Object> studentTeachingInfo(String studentNo) {
+        Long studentId = adminMapper.studentIdByNoOrUsername(studentNo);
+        if (studentId == null) {
+            throw new ApiException(404, "学生不存在");
+        }
+        return cache.get("admin:student-teaching:" + studentId, MAP_TYPE, () -> mapOf(
+                "enrollments", adminMapper.studentEnrollments(studentId),
+                "transcript", adminMapper.studentTranscript(studentId)
+        ));
+    }
+
+    public Map<String, Object> courseGradeStats(Long offeringId) {
+        return cache.get("admin:course-grade-stats:" + offeringId, MAP_TYPE,
+                () -> nullToEmpty(adminMapper.courseGradeStats(offeringId)));
+    }
+
+    @Transactional
+    public Map<String, Object> createNotice(SessionUser user, NoticeRequest request) {
+        adminMapper.insertNotice(request, user.id());
+        clearTeachingCaches();
+        return message("通知已发布");
+    }
+
+    @Transactional
+    public Map<String, Object> updateNotice(Long noticeId, NoticeRequest request) {
+        int updated = adminMapper.updateNotice(noticeId, request);
+        if (updated == 0) {
+            throw new ApiException(404, "通知不存在");
+        }
+        clearTeachingCaches();
+        return message("通知已更新");
+    }
+
+    @Transactional
+    public Map<String, Object> deleteNotice(Long noticeId) {
+        int deleted = adminMapper.deleteNotice(noticeId);
+        if (deleted == 0) {
+            throw new ApiException(404, "通知不存在");
+        }
+        clearTeachingCaches();
+        return message("通知已删除");
+    }
+
+    static Map<String, Object> item(String label, Object value) {
+        return mapOf("label", label, "value", value == null ? "-" : value);
+    }
+
+    static Map<String, Object> message(String message) {
+        return mapOf("message", message);
+    }
+
+    static Map<String, Object> nullToEmpty(Map<String, Object> map) {
+        return map == null ? Map.of() : map;
+    }
+
+    static Map<String, Object> mapOf(Object... pairs) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        for (int i = 0; i < pairs.length; i += 2) {
+            map.put((String) pairs[i], pairs[i + 1]);
+        }
+        return map;
+    }
+
+    private void clearTeachingCaches() {
+        cache.evictByPrefix("admin:", "student:", "teacher:");
+    }
+
+    private String defaultEmail(String username, String role) {
+        String domain = switch (role) {
+            case "teacher" -> "teacher.school.edu.cn";
+            case "student" -> "student.school.edu.cn";
+            default -> "school.edu.cn";
+        };
+        return username + "@" + domain;
+    }
+
+    private Map<String, Object> systemStatus() {
+        java.lang.management.OperatingSystemMXBean baseOs = ManagementFactory.getOperatingSystemMXBean();
+        double cpuLoad = -1;
+        long totalMemory = -1;
+        long freeMemory = -1;
+        if (baseOs instanceof com.sun.management.OperatingSystemMXBean os) {
+            cpuLoad = os.getSystemCpuLoad();
+            totalMemory = os.getTotalPhysicalMemorySize();
+            freeMemory = os.getFreePhysicalMemorySize();
+        }
+        if (totalMemory <= 0) {
+            Runtime runtime = Runtime.getRuntime();
+            totalMemory = runtime.maxMemory();
+            freeMemory = runtime.freeMemory() + (runtime.maxMemory() - runtime.totalMemory());
+        }
+        long usedMemory = Math.max(totalMemory - freeMemory, 0);
+
+        long totalDisk = 0;
+        long freeDisk = 0;
+        File[] roots = File.listRoots();
+        if (roots != null) {
+            for (File root : roots) {
+                totalDisk += Math.max(root.getTotalSpace(), 0);
+                freeDisk += Math.max(root.getFreeSpace(), 0);
+            }
+        }
+        long usedDisk = Math.max(totalDisk - freeDisk, 0);
+
+        return mapOf(
+                "cpu", usageMetric("cpu", percentFromLoad(cpuLoad), baseOs.getAvailableProcessors() + " cores"),
+                "memory", usageMetric("memory", percent(usedMemory, totalMemory), formatCapacity(usedMemory, totalMemory)),
+                "disk", usageMetric("disk", percent(usedDisk, totalDisk), formatCapacity(usedDisk, totalDisk)),
+                "network", networkStatus()
+        );
+    }
+
+    private Map<String, Object> usageMetric(String label, double value, String detail) {
+        return mapOf("label", label, "value", value, "detail", detail);
+    }
+
+    private Map<String, Object> networkStatus() {
+        int activeAdapters = 0;
+        int availableAdapters = 0;
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces != null && interfaces.hasMoreElements()) {
+                NetworkInterface networkInterface = interfaces.nextElement();
+                if (networkInterface.isLoopback() || networkInterface.isVirtual()) {
+                    continue;
+                }
+                availableAdapters++;
+                if (networkInterface.isUp()) {
+                    activeAdapters++;
+                }
+            }
+        } catch (SocketException ignored) {
+            return mapOf(
+                    "label", "network",
+                    "value", 0.0,
+                    "status", "unknown",
+                    "activeAdapters", 0,
+                    "availableAdapters", 0
+            );
+        }
+        boolean online = activeAdapters > 0;
+        return mapOf(
+                "label", "network",
+                "value", online ? 100.0 : 0.0,
+                "status", online ? "online" : "offline",
+                "activeAdapters", activeAdapters,
+                "availableAdapters", Math.max(availableAdapters, activeAdapters)
+        );
+    }
+
+    private double percentFromLoad(double load) {
+        if (load < 0) {
+            return 0.0;
+        }
+        return round(load * 100);
+    }
+
+    private double percent(long used, long total) {
+        if (total <= 0) {
+            return 0.0;
+        }
+        return round((double) used / (double) total * 100.0);
+    }
+
+    private double round(double value) {
+        return Math.round(value * 10.0) / 10.0;
+    }
+
+    private String formatCapacity(long used, long total) {
+        if (total <= 0) {
+            return "无法读取";
+        }
+        double gib = 1024.0 * 1024.0 * 1024.0;
+        return String.format(Locale.ROOT, "%.1f / %.1f GB", used / gib, total / gib);
+    }
+
+    private boolean selectionOpen() {
+        Map<String, Object> semester = commonMapper.currentSemester();
+        if (semester == null) {
+            return false;
+        }
+        String startDate = MapUtil.stringValue(semester, "startDate");
+        String endDate = MapUtil.stringValue(semester, "endDate");
+        if (startDate == null || endDate == null) {
+            return false;
+        }
+        try {
+            java.time.LocalDate now = java.time.LocalDate.now();
+            java.time.LocalDate start = java.time.LocalDate.parse(startDate);
+            java.time.LocalDate end = java.time.LocalDate.parse(endDate);
+            return !now.isBefore(start) && !now.isAfter(end);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public List<Map<String, Object>> teacherCurrentOfferings(Long teacherId) {
+        return cache.get("admin:teacher-offerings:" + teacherId, LIST_TYPE,
+                () -> adminMapper.teacherCurrentOfferings(teacherId));
+    }
+
+    public List<Map<String, Object>> studentCurrentEnrollments(Long studentId) {
+        return cache.get("admin:student-enrollments:" + studentId, LIST_TYPE,
+                () -> adminMapper.studentCurrentEnrollments(studentId));
+    }
+
+    private void validateRatio(Double usualRatio, Double examRatio) {
+        if (usualRatio == null && examRatio == null) {
+            return;
+        }
+        double usual = usualRatio == null ? 0.4 : usualRatio;
+        double exam = examRatio == null ? 0.6 : examRatio;
+        if (usual < 0 || exam < 0 || Math.abs(usual + exam - 1.0) > 0.001) {
+            throw new ApiException(400, "平时分和考试分比例之和必须为 1");
+        }
+    }
+
+    private void validateCourseForNewOffering(Long courseId) {
+        String status = adminMapper.courseStatus(courseId);
+        if (status == null) {
+            throw new ApiException(404, "课程不存在");
+        }
+        if (!"enabled".equals(status)) {
+            throw new ApiException(400, "弃用课程不能新建课程班");
+        }
+    }
+}
