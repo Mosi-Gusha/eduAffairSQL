@@ -64,6 +64,8 @@ const routeTitles = {
   grades: '成绩总表'
 };
 
+const studentSelectedCreditRoutes = new Set(['courseSelect', 'selectedCourses', 'grades', 'noticeManage', 'profile']);
+
 const state = {
   token: localStorage.getItem('course-ui-token') || '',
   user: readJson('course-ui-user'),
@@ -166,6 +168,12 @@ function number(value, fallback = '0') {
   if (value === null || value === undefined || value === '') return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? String(parsed) : escapeHtml(value);
+}
+
+function creditNumber(value) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) return '0';
+  return String(Math.round(parsed * 10) / 10);
 }
 
 function finalScoreText(value, fallback = '\u6682\u65e0') {
@@ -311,10 +319,11 @@ async function loadRoute(force = false) {
   }
 
   if (role === 'student') {
+    if (studentSelectedCreditRoutes.has(route)) {
+      state.routeData.schedule = await api('/api/student/schedule');
+    }
     if (route === 'courseSelect') {
       state.routeData.studentOfferings = await api(`/api/student/offerings?keyword=${encodeURIComponent(state.filters.courseKeyword || '')}`);
-    } else if (route === 'selectedCourses') {
-      state.routeData.schedule = await api('/api/student/schedule');
     } else if (route === 'grades') {
       state.routeData.transcript = await api('/api/student/transcript');
     }
@@ -363,13 +372,28 @@ function topbarTerm() {
 function termStrip() {
   const term = state.catalog?.currentSemester;
   const selectionOpen = state.catalog?.selectionOpen;
+  const selectedCredits = state.user?.role === 'student' && studentSelectedCreditRoutes.has(state.route)
+    ? `<div class="term-item"><span>本学期已选学分</span><strong>${creditNumber(selectedTermCredits())} 学分</strong></div>`
+    : '';
   return `
     <section class="term-strip">
       <div class="term-item"><span>当前学期</span><strong>${text(term?.name)}</strong></div>
       <div class="term-item"><span>学期日期</span><strong>${text(dateRange(term?.startDate, term?.endDate))}</strong></div>
       <div class="term-item"><span>选课状态</span><strong>${selectionOpen ? '选课开放中' : '不在选课时间内'}</strong></div>
+      ${selectedCredits}
     </section>
   `;
+}
+
+function selectedTermCredits() {
+  const seen = new Set();
+  return (state.routeData.schedule || []).reduce((sum, row) => {
+    const key = row.enrollmentId || `${row.courseCode}-${row.courseName}`;
+    if (seen.has(key)) return sum;
+    seen.add(key);
+    const credit = Number(row.credit || 0);
+    return Number.isFinite(credit) ? sum + credit : sum;
+  }, 0);
 }
 
 function renderRoute() {
@@ -477,12 +501,13 @@ function renderSemesterAdmin() {
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>学期</th><th>日期</th><th>状态</th><th>当前</th><th>操作</th></tr></thead>
+            <thead><tr><th>学期</th><th>日期</th><th>最大学分</th><th>状态</th><th>当前</th><th>操作</th></tr></thead>
             <tbody>
               ${semesters.map((term) => `
                 <tr>
                   <td>${text(term.name)}</td>
                   <td>${text(dateRange(term.startDate, term.endDate))}</td>
+                  <td>${creditNumber(term.maxCredit)} 学分</td>
                   <td>${badge(term.status)}</td>
                   <td>${bool(term.isCurrent) ? '是' : '否'}</td>
                   <td><div class="row-actions">${semesterActions(term)}</div></td>
@@ -501,11 +526,11 @@ function renderSemesterAdmin() {
           </form>
         </div>
         <div class="panel">
-          <div class="panel-header"><div><h2>编辑当前学期</h2><p>修改学期名称和日期范围。</p></div></div>
+          <div class="panel-header"><div><h2>编辑当前学期</h2><p>修改学期名称、日期范围和最大学分。</p></div></div>
           ${current ? `
             <form class="form-grid" data-form="update-semester" data-semester-id="${current.id}">
               ${semesterFields(current, false)}
-              <div class="form-actions"><button class="btn btn-primary" type="submit">保存日期</button></div>
+              <div class="form-actions"><button class="btn btn-primary" type="submit">保存学期</button></div>
             </form>
           ` : empty('暂无当前学期')}
         </div>
@@ -520,6 +545,7 @@ function semesterFields(term, disabled) {
     <label class="field"><span>学期名称</span><input name="name" value="${text(term.name || '')}" required ${attr}></label>
     <label class="field"><span>学期开始</span><input name="startDate" type="date" value="${text(term.startDate || '')}" required ${attr}></label>
     <label class="field"><span>学期结束</span><input name="endDate" type="date" value="${text(term.endDate || '')}" required ${attr}></label>
+    <label class="field"><span>最大学分</span><input name="maxCredit" type="number" min="1" step="0.5" value="${text(term.maxCredit ?? 30)}" required ${attr}></label>
   `;
 }
 
@@ -1354,7 +1380,7 @@ document.addEventListener('click', async (event) => {
       await api(`/api/admin/courses/${target.dataset.id}/enable`, { method: 'POST' });
       await refresh('课程已启用');
     } else if (action === 'offering-delete') {
-      if (!confirm('确定要删除该课程班吗？该操作将同时清除所有学生的选课记录和相关成绩、考勤数据。')) return;
+      if (!confirm('确定要删除该课程班吗？该操作将同时清除所有学生的选课记录和相关成绩。')) return;
       await api(`/api/admin/offerings/${target.dataset.id}`, { method: 'DELETE' });
       await refresh('课程班已删除');
     } else if (action === 'course-roster') {
@@ -1504,11 +1530,11 @@ document.addEventListener('submit', async (event) => {
       renderLogin();
       toast('密码已修改，请重新登录');
     } else if (name === 'create-semester') {
-      await api('/api/admin/semesters', { method: 'POST', body: JSON.stringify(formObject(form)) });
+      await api('/api/admin/semesters', { method: 'POST', body: JSON.stringify(asNumberFields(formObject(form), ['maxCredit'])) });
       await refresh('学期已新建');
     } else if (name === 'update-semester') {
-      await api(`/api/admin/semesters/${form.dataset.semesterId}`, { method: 'PUT', body: JSON.stringify(formObject(form)) });
-      await refresh('学期日期已保存');
+      await api(`/api/admin/semesters/${form.dataset.semesterId}`, { method: 'PUT', body: JSON.stringify(asNumberFields(formObject(form), ['maxCredit'])) });
+      await refresh('学期信息已保存');
     } else if (name === 'create-course-modal') {
       await api('/api/admin/courses', { method: 'POST', body: JSON.stringify(asNumberFields(formObject(form), ['departmentId', 'credit'])) });
       state.modal = '';

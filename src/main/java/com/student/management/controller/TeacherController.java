@@ -4,7 +4,6 @@ import java.util.List;
 import java.util.Map;
 
 import com.student.management.common.ApiResponse;
-import com.student.management.dto.AttendanceRequest;
 import com.student.management.dto.GradeRequest;
 import com.student.management.security.RequireRole;
 import com.student.management.security.SessionUser;
@@ -50,11 +49,6 @@ public class TeacherController {
     @PostMapping("/grades")
     public ApiResponse<Map<String, Object>> saveGrade(SessionUser user, @Valid @RequestBody GradeRequest request) {
         return ApiResponse.ok(teacherService.saveGrade(user, request));
-    }
-
-    @PostMapping("/attendance")
-    public ApiResponse<Map<String, Object>> saveAttendance(SessionUser user, @Valid @RequestBody AttendanceRequest request) {
-        return ApiResponse.ok(teacherService.saveAttendance(user, request));
     }
 
     @GetMapping("/grade-stats")

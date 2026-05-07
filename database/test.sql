@@ -6,7 +6,6 @@ USE test;
 
 SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS notices;
-DROP TABLE IF EXISTS attendance;
 DROP TABLE IF EXISTS grades;
 DROP TABLE IF EXISTS enrollments;
 DROP TABLE IF EXISTS course_offerings;
@@ -19,7 +18,6 @@ DROP TABLE IF EXISTS majors;
 DROP TABLE IF EXISTS departments;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS roles;
-DROP TABLE IF EXISTS system_settings;
 SET FOREIGN_KEY_CHECKS = 1;
 
 CREATE TABLE roles (
@@ -80,7 +78,9 @@ CREATE TABLE semesters (
   name VARCHAR(64) NOT NULL UNIQUE,
   start_date DATE NOT NULL,
   end_date DATE NOT NULL,
-  is_current TINYINT(1) NOT NULL DEFAULT 0
+  max_credit DECIMAL(5,1) NOT NULL DEFAULT 30.0,
+  is_current TINYINT(1) NOT NULL DEFAULT 0,
+  CHECK (max_credit > 0)
 ) ENGINE=InnoDB;
 
 CREATE TABLE courses (
@@ -149,17 +149,6 @@ CREATE TABLE grades (
   CONSTRAINT fk_grades_user FOREIGN KEY (updated_by) REFERENCES users(id)
 ) ENGINE=InnoDB;
 
-CREATE TABLE attendance (
-  id BIGINT PRIMARY KEY AUTO_INCREMENT,
-  enrollment_id BIGINT NOT NULL,
-  lesson_date DATE NOT NULL,
-  status ENUM('present','late','absent','leave') NOT NULL DEFAULT 'present',
-  remark VARCHAR(200) NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_attendance_enrollment FOREIGN KEY (enrollment_id) REFERENCES enrollments(id),
-  UNIQUE KEY uk_attendance_day (enrollment_id, lesson_date)
-) ENGINE=InnoDB;
-
 CREATE TABLE notices (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   title VARCHAR(120) NOT NULL,
@@ -168,12 +157,6 @@ CREATE TABLE notices (
   created_by BIGINT NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_notices_user FOREIGN KEY (created_by) REFERENCES users(id)
-) ENGINE=InnoDB;
-
-CREATE TABLE system_settings (
-  code VARCHAR(64) PRIMARY KEY,
-  value VARCHAR(255) NOT NULL,
-  description VARCHAR(255) NULL
 ) ENGINE=InnoDB;
 
 DELIMITER $$
@@ -293,19 +276,14 @@ BEGIN
 
   SELECT co.capacity, co.selected_count, co.status, co.semester_id, co.course_id,
          co.day_of_week, co.start_section, co.end_section, co.week_type, c.credit,
-         s.is_current, s.start_date, s.end_date
+         s.is_current, s.start_date, s.end_date, s.max_credit
     INTO v_capacity, v_selected, v_status, v_semester, v_course,
          v_day, v_start, v_end, v_week_type, v_credit,
-         v_is_current, v_sem_start, v_sem_end
+         v_is_current, v_sem_start, v_sem_end, v_max_credit
     FROM course_offerings co
     JOIN courses c ON c.id = co.course_id
     JOIN semesters s ON s.id = co.semester_id
    WHERE co.id = p_offering_id;
-
-  SELECT CAST(value AS DECIMAL(5,1))
-    INTO v_max_credit
-    FROM system_settings
-   WHERE code = 'max_credit_per_term';
 
   SELECT COALESCE(SUM(c.credit), 0)
     INTO v_current_credit
@@ -389,7 +367,7 @@ INSERT INTO users(id, username, password_hash, display_name, email, role_id, sta
 (9, 't8', SHA2('t8', 256), '孙杰', 't8@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
 (10, 't9', SHA2('t9', 256), '黄磊', 't9@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
 (11, 't10', SHA2('t10', 256), '吴倩', 't10@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
-(12, 's1', SHA2('s1', 256), '林一', 's1@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(12, 's1', SHA2('s1', 256), '周襦', 's1@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
 (13, 's2', SHA2('s2', 256), '陈晨', 's2@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
 (14, 's3', SHA2('s3', 256), '周雨', 's3@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
 (15, 's4', SHA2('s4', 256), '王浩', 's4@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
@@ -399,16 +377,16 @@ INSERT INTO users(id, username, password_hash, display_name, email, role_id, sta
 (19, 's8', SHA2('s8', 256), '黄宇', 's8@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
 (20, 's9', SHA2('s9', 256), '吴迪', 's9@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
 (21, 's10', SHA2('s10', 256), '郑雪', 's10@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(22, 's11', SHA2('s11', 256), '学生11', 's11@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(23, 's12', SHA2('s12', 256), '学生12', 's12@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(24, 's13', SHA2('s13', 256), '学生13', 's13@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(25, 's14', SHA2('s14', 256), '学生14', 's14@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(26, 's15', SHA2('s15', 256), '学生15', 's15@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(27, 's16', SHA2('s16', 256), '学生16', 's16@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(28, 's17', SHA2('s17', 256), '学生17', 's17@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(29, 's18', SHA2('s18', 256), '学生18', 's18@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(30, 's19', SHA2('s19', 256), '学生19', 's19@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(31, 's20', SHA2('s20', 256), '学生20', 's20@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP);
+(22, 's11', SHA2('s11', 256), '康榕', 's11@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(23, 's12', SHA2('s12', 256), '谢昪', 's12@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(24, 's13', SHA2('s13', 256), '广律', 's13@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(25, 's14', SHA2('s14', 256), '詹贤', 's14@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(26, 's15', SHA2('s15', 256), '濮佳', 's15@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(27, 's16', SHA2('s16', 256), '阚文', 's16@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(28, 's17', SHA2('s17', 256), '牧昱', 's17@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(29, 's18', SHA2('s18', 256), '盖虚', 's18@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(30, 's19', SHA2('s19', 256), '权孜', 's19@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(31, 's20', SHA2('s20', 256), '魏亨', 's20@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP);
 
 INSERT INTO departments(id, name, phone) VALUES
 (1, '计算机学院', '010-6001001'),
@@ -470,10 +448,10 @@ INSERT INTO students(id, user_id, student_no, major_id, admission_year) VALUES
 (19, 30, 's19', 5, 2023),
 (20, 31, 's20', 6, 2024);
 
-INSERT INTO semesters(id, name, start_date, end_date, is_current) VALUES
-(1, '2025-2026 学年第二学期', '2026-02-23', '2026-07-05', 1),
-(2, '2025-2026 学年第一学期', '2025-09-01', '2026-01-10', 0),
-(3, '2024-2025 学年第二学期', '2025-02-24', '2025-07-06', 0);
+INSERT INTO semesters(id, name, start_date, end_date, max_credit, is_current) VALUES
+(1, '2025-2026 学年第二学期', '2026-02-23', '2026-07-05', 30.0, 1),
+(2, '2025-2026 学年第一学期', '2025-09-01', '2026-01-10', 30.0, 0),
+(3, '2024-2025 学年第二学期', '2025-02-24', '2025-07-06', 30.0, 0);
 
 INSERT INTO courses(id, code, name, department_id, credit, status) VALUES
 (1, 'C001', '数据结构', 1, 3.0, 'enabled'),
@@ -1123,16 +1101,8 @@ INSERT INTO grades(id, enrollment_id, usual_score, exam_score, final_score, grad
 (199, 299, 63.00, 64.00, 63.70, 1.00, 11, CURRENT_TIMESTAMP),
 (200, 300, 70.00, 75.00, 71.50, 2.00, 2, CURRENT_TIMESTAMP);
 
-INSERT INTO attendance(id, enrollment_id, lesson_date, status, remark, created_at) VALUES
-(1, 1, '2026-03-02', 'present', NULL, CURRENT_TIMESTAMP),
-(2, 1, '2026-03-09', 'late', '迟到 5 分钟', CURRENT_TIMESTAMP),
-(3, 2, '2026-03-03', 'present', NULL, CURRENT_TIMESTAMP);
-
-INSERT INTO system_settings(code, value, description) VALUES
-('max_credit_per_term', '30', '学生每学期最多可选学分');
-
 INSERT INTO notices(id, title, content, audience, created_by, created_at) VALUES
-(1, '本学期选课开放', '请同学们在规定时间内完成选课，教师及时维护课程成绩与考勤。', 'all', 1, CURRENT_TIMESTAMP),
+(1, '本学期选课开放', '请同学们在规定时间内完成选课，教师及时维护课程成绩。', 'all', 1, CURRENT_TIMESTAMP),
 (2, '成绩录入提醒', '任课教师需在选课结束后完成平时成绩和考试成绩录入。', 'teacher', 1, CURRENT_TIMESTAMP),
 (3, '课堂资料通知', '请选课学生提前下载课程资料并按时参加课堂学习。', 'student', 1, CURRENT_TIMESTAMP),
 (4, '五一假期教学安排调整', '假期前后课程按学校校历执行，调停课信息以教务系统通知为准。', 'all', 1, CURRENT_TIMESTAMP),

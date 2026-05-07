@@ -28,6 +28,7 @@ public interface CommonMapper {
 
     @Select("""
             SELECT id, name, start_date AS startDate, end_date AS endDate,
+                   max_credit AS maxCredit,
                    CASE
                      WHEN CURDATE() < start_date THEN 'not_started'
                      WHEN CURDATE() BETWEEN start_date AND end_date THEN 'active'
@@ -41,6 +42,7 @@ public interface CommonMapper {
 
     @Select("""
             SELECT id, name, start_date AS startDate, end_date AS endDate,
+                   max_credit AS maxCredit,
                    CASE
                      WHEN CURDATE() < start_date THEN 'not_started'
                      WHEN CURDATE() BETWEEN start_date AND end_date THEN 'active'

@@ -88,6 +88,7 @@ public interface AdminMapper {
 
     @Select("""
             SELECT id, name, start_date AS startDate, end_date AS endDate,
+                   max_credit AS maxCredit,
                    CASE
                      WHEN CURDATE() < start_date THEN 'not_started'
                      WHEN CURDATE() BETWEEN start_date AND end_date THEN 'active'
@@ -104,6 +105,7 @@ public interface AdminMapper {
 
     @Select("""
             SELECT id, name, start_date AS startDate, end_date AS endDate,
+                   max_credit AS maxCredit,
                    CASE
                      WHEN CURDATE() < start_date THEN 'not_started'
                      WHEN CURDATE() BETWEEN start_date AND end_date THEN 'active'
@@ -116,8 +118,8 @@ public interface AdminMapper {
     Map<String, Object> semesterById(@Param("semesterId") Long semesterId);
 
     @Insert("""
-            INSERT INTO semesters(name, start_date, end_date, is_current)
-            VALUES(#{name}, #{startDate}, #{endDate}, 1)
+            INSERT INTO semesters(name, start_date, end_date, max_credit, is_current)
+            VALUES(#{name}, #{startDate}, #{endDate}, #{maxCredit}, 1)
             """)
     int insertSemester(SemesterRequest request);
 
@@ -125,7 +127,8 @@ public interface AdminMapper {
             UPDATE semesters
                SET name = #{request.name},
                    start_date = #{request.startDate},
-                   end_date = #{request.endDate}
+                   end_date = #{request.endDate},
+                   max_credit = #{request.maxCredit}
              WHERE id = #{semesterId}
             """)
     int updateSemester(@Param("semesterId") Long semesterId, @Param("request") SemesterRequest request);
@@ -355,13 +358,6 @@ public interface AdminMapper {
 
     @Update("UPDATE course_offerings SET status = 'closed' WHERE id = #{offeringId}")
     int closeOffering(@Param("offeringId") Long offeringId);
-
-    @org.apache.ibatis.annotations.Delete("""
-            DELETE FROM attendance WHERE enrollment_id IN (
-                SELECT id FROM enrollments WHERE offering_id = #{offeringId}
-            )
-            """)
-    int deleteAttendanceByOffering(@Param("offeringId") Long offeringId);
 
     @org.apache.ibatis.annotations.Delete("""
             DELETE FROM grades WHERE enrollment_id IN (

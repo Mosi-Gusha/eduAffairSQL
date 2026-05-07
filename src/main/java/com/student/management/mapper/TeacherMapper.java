@@ -125,14 +125,6 @@ public interface TeacherMapper {
     int upsertGrade(@Param("enrollmentId") Long enrollmentId, @Param("usualScore") Double usualScore,
                     @Param("examScore") Double examScore, @Param("userId") Long userId);
 
-    @Insert("""
-            INSERT INTO attendance(enrollment_id, lesson_date, status, remark)
-            VALUES(#{enrollmentId}, #{lessonDate}, #{status}, #{remark})
-            ON DUPLICATE KEY UPDATE status = VALUES(status), remark = VALUES(remark)
-            """)
-    int upsertAttendance(@Param("enrollmentId") Long enrollmentId, @Param("lessonDate") String lessonDate,
-                         @Param("status") String status, @Param("remark") String remark);
-
     @Select("""
             SELECT COUNT(DISTINCT co.id) AS offeringCount,
                    COUNT(e.id) AS studentCount,

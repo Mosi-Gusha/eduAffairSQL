@@ -7,7 +7,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.student.management.common.ApiException;
 import com.student.management.common.MapUtil;
 import com.student.management.common.RedisCacheService;
-import com.student.management.dto.AttendanceRequest;
 import com.student.management.dto.GradeRequest;
 import com.student.management.mapper.CommonMapper;
 import com.student.management.mapper.TeacherMapper;
@@ -77,14 +76,6 @@ public class TeacherService {
         teacherMapper.upsertGrade(request.enrollmentId(), request.usualScore(), request.examScore(), user.id());
         clearTeachingCaches();
         return AdminService.message("成绩已保存");
-    }
-
-    @Transactional
-    public Map<String, Object> saveAttendance(SessionUser user, AttendanceRequest request) {
-        ensureOwner(user, request.enrollmentId());
-        teacherMapper.upsertAttendance(request.enrollmentId(), request.lessonDate(), request.status(), request.remark());
-        clearTeachingCaches();
-        return AdminService.message("考勤已保存");
     }
 
     private Map<String, Object> ensureOwner(SessionUser user, Long enrollmentId) {

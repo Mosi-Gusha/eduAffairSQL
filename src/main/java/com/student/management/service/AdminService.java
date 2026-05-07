@@ -266,7 +266,6 @@ public class AdminService {
 
     @Transactional
     public Map<String, Object> deleteOffering(Long offeringId) {
-        adminMapper.deleteAttendanceByOffering(offeringId);
         adminMapper.deleteGradesByOffering(offeringId);
         adminMapper.deleteEnrollmentsByOffering(offeringId);
         adminMapper.deleteOffering(offeringId);
