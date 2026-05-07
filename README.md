@@ -157,6 +157,8 @@ mysql -u root -p < database/test.sql
 
 可直接使用 `src/main/resources/application.yml` 中的默认值，也可以覆盖：
 
+cmd：
+
 ```bat
 set "DB_HOST=127.0.0.1"
 set "DB_PORT=3306"
@@ -164,6 +166,13 @@ set "DB_NAME=test"
 set "DB_USER=root"
 set "DB_PASSWORD=password"
 set "PORT=8000"
+set "REDIS_HOST=127.0.0.1"
+set "REDIS_PORT=6379"
+set "REDIS_PASSWORD="
+set "REDIS_DATABASE=0"
+set "CACHE_ENABLED=true"
+set "CACHE_TTL_SECONDS=300"
+set "CACHE_REDIS_BACKOFF_SECONDS=30"
 ```
 
 PowerShell：
@@ -175,12 +184,27 @@ $env:DB_NAME="test"
 $env:DB_USER="root"
 $env:DB_PASSWORD="password"
 $env:PORT="8000"
+$env:REDIS_HOST="127.0.0.1"
+$env:REDIS_PORT="6379"
+$env:REDIS_PASSWORD=""
+$env:REDIS_DATABASE="0"
+$env:CACHE_ENABLED="true"
+$env:CACHE_TTL_SECONDS="300"
+$env:CACHE_REDIS_BACKOFF_SECONDS="30"
 ```
 
 Redis 默认启用。如果没有 Redis，可关闭缓存：
 
+cmd：
+
 ```bat
-set CACHE_ENABLED=false
+set "CACHE_ENABLED=false"
+```
+
+PowerShell：
+
+```powershell
+$env:CACHE_ENABLED="false"
 ```
 
 ### 4. 启动项目
