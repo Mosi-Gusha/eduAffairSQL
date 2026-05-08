@@ -1428,6 +1428,10 @@ document.addEventListener('click', async (event) => {
       renderShell();
       return;
     }
+    if (action === 'login-required') {
+      toast(target.dataset.message || '请登录后查看', 'warn');
+      return;
+    }
     if (action === 'navigate') {
       state.route = target.dataset.route;
       localStorage.setItem('course-ui-route', state.route);
@@ -1805,7 +1809,6 @@ function loginView() {
               <span class="feature-icon">↗</span>
               <strong>${title}</strong>
               <p>${desc}</p>
-              <span class="card-arrow">›</span>
             </button>
           `).join('')}
         </div>
@@ -1819,7 +1822,7 @@ function loginView() {
               </button>
             `).join('') : '<div class="empty-state">暂无通知</div>'}
           </div>
-          <button class="announce-more" type="button" data-action="login-required">更多公告 ›</button>
+          <button class="announce-more" type="button" data-action="login-required" data-message="请登录后查看">更多公告 ›</button>
         </section>
       </section>
       <aside class="login-panel-wrap">

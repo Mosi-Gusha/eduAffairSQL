@@ -25,6 +25,23 @@
   --sidebar: #12251f;
   --shadow: 0 1px 2px rgba(18, 37, 31, 0.08);
   --shadow-soft: 0 1px 1px rgba(18, 37, 31, 0.05);
+  --sidebar-width: 256px;
+  --main-pad-x: 24px;
+  --main-pad-top: 20px;
+  --main-pad-bottom: 40px;
+  --rhythm-xs: 8px;
+  --rhythm-sm: 10px;
+  --rhythm-md: 12px;
+  --rhythm-lg: 18px;
+  --panel-pad: 16px;
+  --control-height: 40px;
+  --button-height: 38px;
+  --term-card-height: 78px;
+  --metric-card-height: 116px;
+  --role-hero-height: 230px;
+  --login-visual-y: 50px;
+  --login-cards-top: 96px;
+  --login-card-height: 142px;
   font-family: "Inter", "Segoe UI", "Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
 }
 
@@ -311,7 +328,7 @@ input,
 select,
 textarea {
   width: 100%;
-  min-height: 40px;
+  min-height: var(--control-height);
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -349,7 +366,7 @@ textarea:focus-visible,
 }
 
 .btn {
-  min-height: 38px;
+  min-height: var(--button-height);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -411,7 +428,7 @@ textarea:focus-visible,
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 256px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 }
 
 .sidebar {
@@ -421,8 +438,8 @@ textarea:focus-visible,
   align-self: start;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  gap: 18px;
-  padding: 18px 14px;
+  gap: var(--rhythm-lg);
+  padding: var(--rhythm-lg) clamp(12px, 0.82vw, 14px);
   border-right: 1px solid var(--line);
   background: linear-gradient(180deg, var(--sidebar) 0%, #18382f 100%);
   color: #dce8df;
@@ -430,16 +447,16 @@ textarea:focus-visible,
 
 .brand {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: clamp(38px, 2.46vw, 42px) minmax(0, 1fr);
+  gap: var(--rhythm-sm);
   align-items: center;
-  padding: 8px 8px 16px;
+  padding: var(--rhythm-xs) var(--rhythm-xs) var(--panel-pad);
   border-bottom: 1px solid rgba(220, 232, 223, 0.16);
 }
 
 .brand-mark {
-  width: 42px;
-  height: 42px;
+  width: clamp(38px, 2.46vw, 42px);
+  height: clamp(38px, 2.46vw, 42px);
   display: grid;
   place-items: center;
   border-radius: 8px;
@@ -467,7 +484,7 @@ textarea:focus-visible,
 }
 
 .nav-section {
-  margin: 14px 8px 8px;
+  margin: clamp(10px, 1.31vh, 14px) 8px var(--rhythm-xs);
   color: #9db8aa;
   font-size: 12px;
   font-weight: 800;
@@ -475,10 +492,10 @@ textarea:focus-visible,
 
 .nav-button {
   width: 100%;
-  min-height: 40px;
+  min-height: var(--control-height);
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
-  gap: 10px;
+  gap: var(--rhythm-sm);
   align-items: center;
   padding: 0 10px;
   border-radius: 6px;
@@ -497,8 +514,8 @@ textarea:focus-visible,
 
 .sidebar-footer {
   display: grid;
-  gap: 10px;
-  padding: 12px 8px 4px;
+  gap: var(--rhythm-sm);
+  padding: var(--rhythm-md) 8px 4px;
   border-top: 1px solid rgba(220, 232, 223, 0.16);
 }
 
@@ -540,15 +557,15 @@ textarea:focus-visible,
 
 .main {
   min-width: 0;
-  padding: 20px 24px 40px;
+  padding: var(--main-pad-top) var(--main-pad-x) var(--main-pad-bottom);
 }
 
 .topbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 18px;
+  gap: var(--rhythm-lg);
   align-items: center;
-  margin-bottom: 18px;
+  margin-bottom: var(--rhythm-lg);
 }
 
 .breadcrumb {
@@ -560,7 +577,7 @@ textarea:focus-visible,
 }
 
 .page-title {
-  margin: 6px 0 0;
+  margin: clamp(4px, 0.56vh, 6px) 0 0;
   font-size: 30px;
   letter-spacing: 0;
 }
@@ -608,13 +625,13 @@ textarea:focus-visible,
 .term-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
+  gap: var(--rhythm-md);
+  margin-bottom: var(--rhythm-lg);
 }
 
 .term-item {
-  min-height: 78px;
-  padding: 14px;
+  min-height: var(--term-card-height);
+  padding: clamp(10px, 1.31vh, 14px);
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -629,33 +646,33 @@ textarea:focus-visible,
 
 .term-item strong {
   display: block;
-  margin-top: 8px;
+  margin-top: var(--rhythm-xs);
   color: var(--text);
   font-size: 18px;
 }
 
 .page-grid {
   display: grid;
-  gap: 14px;
+  gap: clamp(12px, 1.31vh, 14px);
 }
 
 .grid-2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.42fr);
-  gap: 14px;
+  gap: clamp(12px, 1.31vh, 14px);
   align-items: start;
 }
 
 .grid-3 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  gap: clamp(12px, 1.31vh, 14px);
 }
 
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: var(--rhythm-md);
 }
 
 .metric-card,
@@ -669,8 +686,8 @@ textarea:focus-visible,
 }
 
 .metric-card {
-  min-height: 116px;
-  padding: 16px;
+  min-height: var(--metric-card-height);
+  padding: var(--panel-pad);
   display: grid;
   align-content: space-between;
 }
@@ -682,13 +699,13 @@ textarea:focus-visible,
 
 .metric-card strong {
   display: block;
-  margin-top: 12px;
+  margin-top: var(--rhythm-md);
   font-size: 28px;
   line-height: 1;
 }
 
 .metric-card .metric-foot {
-  margin-top: 12px;
+  margin-top: var(--rhythm-md);
   color: var(--muted);
   font-size: 12px;
 }
@@ -696,24 +713,24 @@ textarea:focus-visible,
 .admin-dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.42fr);
-  gap: 14px;
+  gap: clamp(12px, 1.31vh, 14px);
   align-items: start;
 }
 
 .admin-primary-column {
   display: grid;
-  gap: 14px;
+  gap: clamp(12px, 1.31vh, 14px);
   min-width: 0;
 }
 
 .admin-metrics {
   grid-template-columns: repeat(4, minmax(112px, 1fr));
-  gap: 10px;
+  gap: var(--rhythm-sm);
 }
 
 .admin-metrics .metric-card {
   min-height: 94px;
-  padding: 14px;
+  padding: clamp(12px, 1.31vh, 14px);
 }
 
 .admin-metrics .metric-card strong {
@@ -723,7 +740,7 @@ textarea:focus-visible,
 .profile-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.42fr);
-  gap: 14px;
+  gap: clamp(12px, 1.31vh, 14px);
   align-items: start;
 }
 
@@ -807,15 +824,15 @@ textarea:focus-visible,
 .system-status-grid {
   display: grid;
   grid-template-columns: 0.92fr 1.08fr;
-  gap: 12px;
+  gap: var(--rhythm-md);
 }
 
 .system-metric {
   min-height: 124px;
   display: grid;
   align-content: space-between;
-  gap: 12px;
-  padding: 14px;
+  gap: var(--rhythm-md);
+  padding: clamp(10px, 1.31vh, 14px);
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-2);
@@ -969,7 +986,7 @@ textarea:focus-visible,
 
 .panel {
   min-width: 0;
-  padding: 16px;
+  padding: var(--panel-pad);
 }
 
 .status-panel {
@@ -1012,9 +1029,9 @@ textarea:focus-visible,
 .panel-header {
   display: flex;
   justify-content: space-between;
-  gap: 14px;
+  gap: clamp(10px, 1.31vh, 14px);
   align-items: flex-start;
-  margin-bottom: 14px;
+  margin-bottom: clamp(12px, 1.31vh, 14px);
 }
 
 .panel-header h2 {
@@ -1039,10 +1056,10 @@ textarea:focus-visible,
 .filter-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(130px, 1fr)) auto;
-  gap: 10px;
+  gap: var(--rhythm-sm);
   align-items: end;
-  padding: 12px;
-  margin-bottom: 12px;
+  padding: var(--rhythm-md);
+  margin-bottom: var(--rhythm-md);
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-2);
@@ -1062,7 +1079,7 @@ textarea:focus-visible,
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: var(--rhythm-md);
 }
 
 .form-grid .full,
@@ -1547,27 +1564,27 @@ tbody tr:last-child td {
 .course-select-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 14px;
+  gap: clamp(12px, 1.31vh, 14px);
   align-items: start;
 }
 
 .course-grid {
   display: grid;
-  gap: 10px;
+  gap: var(--rhythm-sm);
 }
 
 .course-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  padding: 14px;
+  gap: clamp(10px, 1.31vh, 14px);
+  padding: clamp(12px, 1.31vh, 14px);
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
 }
 
 .course-card h3 {
-  margin: 0 0 8px;
+  margin: 0 0 var(--rhythm-xs);
   font-size: 17px;
 }
 
@@ -1867,6 +1884,9 @@ tbody tr:last-child td {
   width: min(50vw, 620px);
   height: 360px;
   pointer-events: none;
+  opacity: 1;
+  filter: blur(0);
+  transition: opacity 180ms ease, filter 180ms ease, transform 180ms ease, visibility 180ms ease;
 }
 
 .login-illustration::before {
@@ -2057,15 +2077,6 @@ button.campus-card {
   line-height: 1.6;
 }
 
-.card-arrow {
-  position: absolute;
-  right: 18px;
-  bottom: 18px;
-  color: var(--text-2);
-  font-size: 28px;
-  line-height: 1;
-}
-
 .login-announcements {
   position: relative;
   z-index: 2;
@@ -2156,16 +2167,16 @@ button.campus-card {
 }
 
 .role-home {
-  gap: 16px;
+  gap: var(--panel-pad);
 }
 
 .role-hero {
-  min-height: 230px;
+  min-height: var(--role-hero-height);
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(240px, 0.34fr);
-  gap: 18px;
+  gap: var(--rhythm-lg);
   align-items: stretch;
-  padding: 24px;
+  padding: clamp(16px, 2.25vh, 24px);
   border: 1px solid var(--line);
   border-radius: 8px;
   background: linear-gradient(135deg, #fffdf7, #eef6ef);
@@ -2189,15 +2200,15 @@ button.campus-card {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 24px;
+  margin-top: clamp(14px, 2.25vh, 24px);
 }
 
 .hero-term,
 .teacher-counts {
   display: grid;
   align-content: center;
-  gap: 10px;
-  padding: 20px;
+  gap: var(--rhythm-sm);
+  padding: clamp(14px, 1.875vh, 20px);
   border: 1px solid rgba(36, 95, 115, 0.14);
   border-radius: 8px;
   background: rgba(255, 253, 247, 0.76);
@@ -2255,17 +2266,17 @@ button.campus-card {
 }
 
 .login-product .login-visual {
-  gap: 20px;
-  padding-top: 50px;
-  padding-bottom: 50px;
+  gap: clamp(16px, 1.875vh, 20px);
+  padding-top: var(--login-visual-y);
+  padding-bottom: var(--login-visual-y);
 }
 
 .login-product .login-title {
-  margin-top: 18px;
+  margin-top: clamp(10px, 1.69vh, 18px);
 }
 
 .title-rule {
-  margin-top: 22px;
+  margin-top: clamp(16px, 2.06vh, 22px);
 }
 
 .login-illustration {
@@ -2277,12 +2288,12 @@ button.campus-card {
 }
 
 .login-cards {
-  margin-top: 96px;
+  margin-top: var(--login-cards-top);
 }
 
 .login-cards .campus-card,
 .login-announcements {
-  min-height: 142px;
+  min-height: var(--login-card-height);
 }
 
 .teacher-course-layout {
@@ -2342,6 +2353,118 @@ button.campus-card {
   font-weight: 700;
 }
 
+@media (max-width: 1600px) {
+  :root {
+    --sidebar-width: 224px;
+    --main-pad-x: 16px;
+    --main-pad-top: 12px;
+    --main-pad-bottom: 28px;
+    --rhythm-xs: 6px;
+    --rhythm-sm: 8px;
+    --rhythm-md: 10px;
+    --rhythm-lg: 12px;
+    --panel-pad: 14px;
+    --control-height: 36px;
+    --button-height: 34px;
+    --term-card-height: 62px;
+    --metric-card-height: 82px;
+    --role-hero-height: 174px;
+    --login-visual-y: 28px;
+    --login-cards-top: 52px;
+    --login-card-height: 118px;
+  }
+
+  .brand strong {
+    font-size: 14px;
+  }
+
+  .breadcrumb {
+    font-size: 12px;
+  }
+
+  .term-window {
+    width: min(360px, 32vw);
+  }
+
+  .term-item strong {
+    font-size: 15px;
+  }
+
+  .panel-header h2 {
+    font-size: 17px;
+  }
+
+  .filter-grid {
+    padding: 10px;
+  }
+
+  .btn {
+    padding: 0 11px;
+  }
+
+  .system-metric {
+    min-height: 96px;
+  }
+
+  .status-ring {
+    width: 60px;
+    height: 60px;
+  }
+
+  .role-hero h2 {
+    margin-top: 4px;
+  }
+
+  .role-hero p {
+    line-height: 1.6;
+  }
+
+  .login-view {
+    grid-template-columns: minmax(0, 1fr) 390px;
+  }
+
+  .login-product {
+    grid-template-columns: minmax(0, 1fr) 390px;
+  }
+
+  .login-product .login-title h1 {
+    font-size: clamp(40px, 4.4vw, 62px);
+  }
+
+  .login-product .login-title p {
+    line-height: 1.65;
+  }
+
+  .login-cards {
+    width: min(900px, 100%);
+    gap: 10px;
+  }
+
+  .login-announcements {
+    width: min(900px, 100%);
+    grid-template-columns: 120px minmax(0, 1fr) auto;
+    gap: 12px;
+  }
+
+  .feature-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+  }
+
+  .login-notice {
+    min-height: 72px;
+  }
+}
+
+@media (max-width: 1560px) and (min-width: 1181px) {
+  .login-illustration {
+    opacity: 0.48;
+    filter: blur(4px);
+    right: 10px;
+  }
+}
+
 @media (max-width: 1180px) {
   .metric-grid,
   .term-strip {
@@ -2359,11 +2482,6 @@ button.campus-card {
 
   .admin-metrics {
     grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .login-illustration {
-    opacity: 0.42;
-    right: 10px;
   }
 
   .login-cards,
@@ -2389,18 +2507,29 @@ button.campus-card {
   }
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1440px) {
+  .login-illustration {
+    opacity: 0.24;
+    filter: blur(8px);
+    right: -34px;
+  }
+}
+
+@media (max-width: 1260px) {
+  .login-illustration {
+    opacity: 0;
+    visibility: hidden;
+    filter: blur(12px);
+  }
+}
+
+@media (max-width: 1080px) {
   .login-view {
     grid-template-columns: 1fr;
   }
 
   .login-illustration {
-    position: relative;
-    top: auto;
-    right: auto;
-    width: min(100%, 560px);
-    height: 280px;
-    opacity: 0.72;
+    display: none;
   }
 
   .login-cards {
