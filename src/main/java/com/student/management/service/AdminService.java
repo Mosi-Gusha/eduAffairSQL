@@ -112,14 +112,25 @@ public class AdminService {
     }
 
     @Transactional
-    public Map<String, Object> deleteTeacher(Long teacherId) {
+    public Map<String, Object> disableTeacher(Long teacherId) {
         Long userId = adminMapper.teacherUserId(teacherId);
         if (userId == null) {
             throw new ApiException(404, "教师不存在");
         }
-        adminMapper.disableUser(userId);
+        adminMapper.updateUserStatus(userId, "disabled");
         clearTeachingCaches();
-        return message("教师账号已删除");
+        return message("教师已弃用");
+    }
+
+    @Transactional
+    public Map<String, Object> enableTeacher(Long teacherId) {
+        Long userId = adminMapper.teacherUserId(teacherId);
+        if (userId == null) {
+            throw new ApiException(404, "教师不存在");
+        }
+        adminMapper.updateUserStatus(userId, "enabled");
+        clearTeachingCaches();
+        return message("教师已启用");
     }
 
     public List<Map<String, Object>> listStudents(String keyword) {
@@ -152,24 +163,25 @@ public class AdminService {
     }
 
     @Transactional
-    public Map<String, Object> deleteStudent(Long studentId) {
+    public Map<String, Object> disableStudent(Long studentId) {
         Long userId = adminMapper.studentUserId(studentId);
         if (userId == null) {
             throw new ApiException(404, "学生不存在");
         }
-        adminMapper.disableUser(userId);
+        adminMapper.updateUserStatus(userId, "disabled");
         clearTeachingCaches();
-        return message("学生账号已删除");
+        return message("学生已弃用");
     }
 
     @Transactional
-    public Map<String, Object> resetPassword(Long userId) {
-        String username = adminMapper.usernameById(userId);
-        if (username == null) {
-            throw new ApiException(404, "用户不存在");
+    public Map<String, Object> enableStudent(Long studentId) {
+        Long userId = adminMapper.studentUserId(studentId);
+        if (userId == null) {
+            throw new ApiException(404, "学生不存在");
         }
-        adminMapper.resetPassword(userId, PasswordUtil.hash(username));
-        return message("密码已重置为账号：" + username);
+        adminMapper.updateUserStatus(userId, "enabled");
+        clearTeachingCaches();
+        return message("学生已启用");
     }
 
     @Transactional
@@ -184,7 +196,7 @@ public class AdminService {
         if ("admin".equals(role)) {
             throw new ApiException(400, "系统管理员账号只有一个，不能删除");
         }
-        adminMapper.disableUser(userId);
+        adminMapper.updateUserStatus(userId, "disabled");
         clearTeachingCaches();
         return message("用户已删除");
     }

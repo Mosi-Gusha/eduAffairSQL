@@ -50,11 +50,6 @@ public class AdminController {
         return ApiResponse.ok(adminService.deleteUser(user, userId));
     }
 
-    @PostMapping("/users/{userId}/reset-password")
-    public ApiResponse<Map<String, Object>> resetPassword(@PathVariable Long userId) {
-        return ApiResponse.ok(adminService.resetPassword(userId));
-    }
-
     @GetMapping("/teachers")
     public ApiResponse<List<Map<String, Object>>> teachers(@RequestParam(required = false) String keyword) {
         return ApiResponse.ok(adminService.listTeachers(keyword));
@@ -71,9 +66,14 @@ public class AdminController {
         return ApiResponse.ok(adminService.updateTeacher(teacherId, request));
     }
 
-    @DeleteMapping("/teachers/{teacherId}")
-    public ApiResponse<Map<String, Object>> deleteTeacher(@PathVariable Long teacherId) {
-        return ApiResponse.ok(adminService.deleteTeacher(teacherId));
+    @PostMapping("/teachers/{teacherId}/disable")
+    public ApiResponse<Map<String, Object>> disableTeacher(@PathVariable Long teacherId) {
+        return ApiResponse.ok(adminService.disableTeacher(teacherId));
+    }
+
+    @PostMapping("/teachers/{teacherId}/enable")
+    public ApiResponse<Map<String, Object>> enableTeacher(@PathVariable Long teacherId) {
+        return ApiResponse.ok(adminService.enableTeacher(teacherId));
     }
 
     @GetMapping("/students")
@@ -92,9 +92,14 @@ public class AdminController {
         return ApiResponse.ok(adminService.updateStudent(studentId, request));
     }
 
-    @DeleteMapping("/students/{studentId}")
-    public ApiResponse<Map<String, Object>> deleteStudent(@PathVariable Long studentId) {
-        return ApiResponse.ok(adminService.deleteStudent(studentId));
+    @PostMapping("/students/{studentId}/disable")
+    public ApiResponse<Map<String, Object>> disableStudent(@PathVariable Long studentId) {
+        return ApiResponse.ok(adminService.disableStudent(studentId));
+    }
+
+    @PostMapping("/students/{studentId}/enable")
+    public ApiResponse<Map<String, Object>> enableStudent(@PathVariable Long studentId) {
+        return ApiResponse.ok(adminService.enableStudent(studentId));
     }
 
     @GetMapping("/catalog")

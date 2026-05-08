@@ -14,7 +14,7 @@ const statusText = {
   open: '开放',
   selected: '已选',
   dropped: '已退',
-  disabled: '停用',
+  disabled: '弃用',
   enabled: '启用'
 };
 const roleText = { admin: '管理员', teacher: '教师', student: '学生' };
@@ -584,7 +584,7 @@ function renderSemesterAdmin() {
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>学期</th><th>日期</th><th>最大学分</th><th>状态</th><th>当前</th><th>操作</th></tr></thead>
+            <thead><tr><th class="col-term">学期</th><th class="col-date">日期</th><th class="col-credit">最大学分</th><th class="col-status">状态</th><th class="col-current">当前</th><th class="col-actions">操作</th></tr></thead>
             <tbody>
               ${semesters.map((term) => `
                 <tr>
@@ -664,7 +664,7 @@ function courseCatalogTable(rows) {
   return `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>课程号</th><th>课程名</th><th>开课院系</th><th>学分</th><th>课程状态</th><th>操作</th></tr></thead>
+        <thead><tr><th class="col-code">课程号</th><th class="col-course">课程名</th><th class="col-dept">开课院系</th><th class="col-credit">学分</th><th class="col-status">课程状态</th><th class="col-actions">操作</th></tr></thead>
         <tbody>${rows.map((row) => `
           <tr>
             <td><b>${text(row.code)}</b></td>
@@ -680,6 +680,14 @@ function courseCatalogTable(rows) {
       </table>
     </div>
   `;
+}
+
+function userStatusAction(type, row) {
+  const id = type === 'student' ? row.studentId : row.teacherId;
+  if (row.status === 'enabled') {
+    return `<button class="btn btn-danger" data-action="${type}-disable" data-id="${id}">弃用</button>`;
+  }
+  return `<button class="btn btn-primary" data-action="${type}-enable" data-id="${id}">启用</button>`;
 }
 
 function renderCourseManage() {
@@ -709,7 +717,7 @@ function offeringTable(rows, adminActions = false) {
   return `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>课程</th><th>教师</th><th>时间</th><th>教室</th><th>容量</th><th>状态</th>${adminActions ? '<th>操作</th>' : ''}</tr></thead>
+        <thead><tr><th class="col-course">课程</th><th class="col-name">教师</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">容量</th><th class="col-status">状态</th>${adminActions ? '<th class="col-actions">操作</th>' : ''}</tr></thead>
         <tbody>${rows.map((row) => `
           <tr>
             <td><b>${text(row.courseCode)}</b> ${text(row.courseName)}</td>
@@ -939,16 +947,22 @@ function renderEditTeacherModal(teacherId) {
 function renderCourseRosterModal(offeringId) {
   return state.routeData.rosterData ? `
     <div class="modal-backdrop">
-      <div class="modal">
+      <div class="modal roster-modal">
         <div class="modal-header">
           <h2>选课名单</h2>
           <button class="btn btn-ghost" data-action="close-modal">&times;</button>
         </div>
         <div class="modal-body">
           <div class="table-wrap"><table>
-            <thead><tr><th>学号</th><th>姓名</th><th>专业</th><th>邮箱</th></tr></thead>
+            <thead><tr><th class="col-id">学号</th><th class="col-name">姓名</th><th class="col-major">专业</th><th class="col-email">邮箱</th><th class="col-actions">操作</th></tr></thead>
             <tbody>${state.routeData.rosterData.map((row) => `
-              <tr><td>${text(row.studentNo)}</td><td>${text(row.studentName)}</td><td>${text(row.majorName)}</td><td>${text(row.email)}</td></tr>
+              <tr>
+                <td>${text(row.studentNo)}</td>
+                <td>${text(row.studentName)}</td>
+                <td>${text(row.majorName)}</td>
+                <td>${text(row.email)}</td>
+                <td><button class="btn btn-danger" data-action="admin-roster-drop" data-id="${row.enrollmentId}" data-offering-id="${offeringId}">删除</button></td>
+              </tr>
             `).join('')}</tbody>
           </table></div>
         </div>
@@ -969,7 +983,7 @@ function renderTeacherOfferingsModal(teacherId) {
         <div class="modal-body">
           ${data.length ? `
             <div class="table-wrap"><table>
-              <thead><tr><th>课程</th><th>时间</th><th>教室</th><th>容量</th><th>平时比例</th><th>考试比例</th></tr></thead>
+              <thead><tr><th class="col-course">课程</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">容量</th><th class="col-ratio">平时比例</th><th class="col-ratio">考试比例</th></tr></thead>
               <tbody>${data.map((row) => `
                 <tr>
                   <td><b>${text(row.courseCode)}</b> ${text(row.courseName)}</td>
@@ -1000,7 +1014,7 @@ function renderStudentEnrollmentsModal(studentId) {
         <div class="modal-body">
           ${data.length ? `
             <div class="table-wrap"><table>
-              <thead><tr><th>课程</th><th>教师</th><th>时间</th><th>教室</th><th>容量</th><th>平时比例</th><th>考试比例</th></tr></thead>
+              <thead><tr><th class="col-course">课程</th><th class="col-name">教师</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">容量</th><th class="col-ratio">平时比例</th><th class="col-ratio">考试比例</th></tr></thead>
               <tbody>${data.map((row) => `
                 <tr>
                   <td><b>${text(row.courseCode)}</b> ${text(row.courseName)}</td>
@@ -1029,7 +1043,7 @@ function renderEnrollmentReport() {
         <div class="panel-header"><div><h2>选课统计</h2><p>点击课程班查看真实选课名单。</p></div></div>
         ${rows.length ? `
           <div class="table-wrap"><table>
-            <thead><tr><th>课程</th><th>教师</th><th>人数</th><th>满班率</th><th>名单</th></tr></thead>
+            <thead><tr><th class="col-course">课程</th><th class="col-name">教师</th><th class="col-capacity">人数</th><th class="col-progress">满班率</th><th class="col-actions">名单</th></tr></thead>
             <tbody>${rows.map((row) => `
               <tr>
                 <td>${text(row.courseCode)} ${text(row.courseName)}</td>
@@ -1075,7 +1089,7 @@ function studentEnrollmentTable(rows) {
   if (!rows.length) return empty('暂无修课记录');
   return `
     <div class="table-wrap"><table>
-      <thead><tr><th>学期</th><th>课程</th><th>教师</th><th>时间</th><th>状态</th></tr></thead>
+      <thead><tr><th class="col-term">学期</th><th class="col-course">课程</th><th class="col-name">教师</th><th class="col-time">时间</th><th class="col-status">状态</th></tr></thead>
       <tbody>${rows.map((row) => `
         <tr><td>${text(row.semesterName)}</td><td>${text(row.courseCode)} ${text(row.courseName)}</td><td>${text(row.teacherName)}</td><td>${courseTime(row)}</td><td>${badge(row.status)}</td></tr>
       `).join('')}</tbody>
@@ -1100,8 +1114,8 @@ function renderStudents() {
       </div>
       ${pageItems.length ? `
         <div class="table-wrap"><table>
-          <thead><tr><th>学号</th><th>姓名</th><th>学院</th><th>专业</th><th>学生邮箱</th><th>入学年份</th><th>状态</th><th>操作</th></tr></thead>
-          <tbody>${pageItems.map((row) => `<tr><td>${text(row.studentNo)}</td><td>${text(row.name)}</td><td>${text(row.departmentName || '-')}</td><td>${text(row.majorName || '-')}</td><td>${text(row.email || '-')}</td><td>${text(row.admissionYear)}</td><td>${badge(row.status)}</td><td><div class="row-actions"><button class="btn" data-action="edit-student" data-id="${row.studentId}">修改</button><button class="btn" data-action="student-enrollments" data-id="${row.studentId}">选课详情</button><button class="btn btn-danger" data-action="delete-student" data-id="${row.studentId}">删除</button></div></td></tr>`).join('')}</tbody>
+          <thead><tr><th class="col-id">学号</th><th class="col-name">姓名</th><th class="col-dept">学院</th><th class="col-major">专业</th><th class="col-email">学生邮箱</th><th class="col-year">入学年份</th><th class="col-status">状态</th><th class="col-actions">操作</th></tr></thead>
+          <tbody>${pageItems.map((row) => `<tr><td>${text(row.studentNo)}</td><td>${text(row.name)}</td><td>${text(row.departmentName || '-')}</td><td>${text(row.majorName || '-')}</td><td>${text(row.email || '-')}</td><td>${text(row.admissionYear)}</td><td>${badge(row.status)}</td><td><div class="row-actions"><button class="btn" data-action="edit-student" data-id="${row.studentId}">修改</button><button class="btn" data-action="student-enrollments" data-id="${row.studentId}">选课详情</button>${userStatusAction('student', row)}</div></td></tr>`).join('')}</tbody>
         </table></div>
       ` : empty('暂无学生')}
       ${renderPagination(totalPages, state.studentPage, 'student-page')}
@@ -1126,8 +1140,8 @@ function renderTeachers() {
       </div>
       ${pageItems.length ? `
         <div class="table-wrap"><table>
-          <thead><tr><th>工号</th><th>姓名</th><th>院系</th><th>职称</th><th>教师邮箱</th><th>状态</th><th>操作</th></tr></thead>
-          <tbody>${pageItems.map((row) => `<tr><td>${text(row.teacherNo)}</td><td>${text(row.name)}</td><td>${text(row.departmentName)}</td><td>${text(row.title)}</td><td>${text(row.email || '-')}</td><td>${badge(row.status)}</td><td><div class="row-actions"><button class="btn" data-action="edit-teacher" data-id="${row.teacherId}">修改</button><button class="btn" data-action="teacher-offerings" data-id="${row.teacherId}">授课详情</button><button class="btn btn-danger" data-action="delete-teacher" data-id="${row.teacherId}">删除</button></div></td></tr>`).join('')}</tbody>
+          <thead><tr><th class="col-id">工号</th><th class="col-name">姓名</th><th class="col-dept">院系</th><th class="col-title">职称</th><th class="col-email">教师邮箱</th><th class="col-status">状态</th><th class="col-actions">操作</th></tr></thead>
+          <tbody>${pageItems.map((row) => `<tr><td>${text(row.teacherNo)}</td><td>${text(row.name)}</td><td>${text(row.departmentName)}</td><td>${text(row.title)}</td><td>${text(row.email || '-')}</td><td>${badge(row.status)}</td><td><div class="row-actions"><button class="btn" data-action="edit-teacher" data-id="${row.teacherId}">修改</button><button class="btn" data-action="teacher-offerings" data-id="${row.teacherId}">授课详情</button>${userStatusAction('teacher', row)}</div></td></tr>`).join('')}</tbody>
         </table></div>
       ` : empty('暂无教师')}
       ${renderPagination(totalPages, state.teacherPage, 'teacher-page')}
@@ -1142,7 +1156,7 @@ function renderTeacherCourses() {
       <div class="panel-header"><div><h2>任课课程</h2></div></div>
       ${courses.length ? `
         <div class="table-wrap"><table>
-          <thead><tr><th>学期</th><th>课程</th><th>时间</th><th>教室</th><th>人数</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th class="col-term">学期</th><th class="col-course">课程</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">人数</th><th class="col-status">状态</th><th class="col-actions">操作</th></tr></thead>
           <tbody>${courses.map((row) => `
             <tr>
               <td>${text(row.semesterName)}</td>
@@ -1175,7 +1189,7 @@ function renderTeacherRosterModal(offeringId) {
         <div class="modal-body">
           ${data.length ? `
             <div class="table-wrap"><table>
-              <thead><tr><th>学号</th><th>姓名</th><th>专业</th><th>邮箱</th></tr></thead>
+              <thead><tr><th class="col-id">学号</th><th class="col-name">姓名</th><th class="col-major">专业</th><th class="col-email">邮箱</th></tr></thead>
               <tbody>${data.map((row) => `
                 <tr><td>${text(row.studentNo)}</td><td>${text(row.studentName)}</td><td>${text(row.majorName)}</td><td>${text(row.email)}</td></tr>
               `).join('')}</tbody>
@@ -1309,7 +1323,7 @@ function gradeTable(rows) {
   if (!rows.length) return empty('暂无成绩');
   return `
     <div class="table-wrap"><table>
-      <thead><tr><th>学期</th><th>课程</th><th>学分</th><th>平时分</th><th>考试分</th><th>最终分</th><th>绩点</th></tr></thead>
+      <thead><tr><th class="col-term">学期</th><th class="col-course">课程</th><th class="col-credit">学分</th><th class="col-score">平时分</th><th class="col-score">考试分</th><th class="col-score">最终分</th><th class="col-gpa">绩点</th></tr></thead>
       <tbody>${rows.map((row) => `<tr><td>${text(row.semesterName)}</td><td>${text(row.courseCode)} ${text(row.courseName)}</td><td>${number(row.credit)}</td><td>${text(row.usualScore)}</td><td>${text(row.examScore)}</td><td>${finalScoreText(row.finalScore)}</td><td>${text(row.gradePoint)}</td></tr>`).join('')}</tbody>
     </table></div>
   `;
@@ -1387,7 +1401,7 @@ function rosterTable(rows) {
   if (!rows.length) return empty('暂无名单');
   return `
     <div class="table-wrap"><table>
-      <thead><tr><th>学号</th><th>姓名</th><th>专业</th><th>邮箱</th><th>平时分</th><th>考试分</th><th>最终分</th><th>绩点</th></tr></thead>
+      <thead><tr><th class="col-id">学号</th><th class="col-name">姓名</th><th class="col-major">专业</th><th class="col-email">邮箱</th><th class="col-score">平时分</th><th class="col-score">考试分</th><th class="col-score">最终分</th><th class="col-gpa">绩点</th></tr></thead>
       <tbody>${rows.map((row) => `<tr><td>${text(row.studentNo)}</td><td>${text(row.studentName)}</td><td>${text(row.majorName)}</td><td>${text(row.email)}</td><td>${text(row.usualScore)}</td><td>${text(row.examScore)}</td><td>${finalScoreText(row.finalScore)}</td><td>${text(row.gradePoint)}</td></tr>`).join('')}</tbody>
     </table></div>
   `;
@@ -1465,6 +1479,18 @@ document.addEventListener('click', async (event) => {
       state.routeData.rosterData = await api(`/api/admin/offerings/${target.dataset.id}/roster`);
       state.modal = renderCourseRosterModal(target.dataset.id);
       renderShell();
+    } else if (action === 'admin-roster-drop') {
+      const offeringId = target.dataset.offeringId;
+      if (!confirm('确定要将该学生从该课程班删除吗？该操作会退掉该学生的这门课。')) return;
+      await api('/api/admin/teaching/drop', {
+        method: 'POST',
+        body: JSON.stringify({ enrollmentId: Number(target.dataset.id) })
+      });
+      await loadRoute(true);
+      state.routeData.rosterData = await api(`/api/admin/offerings/${offeringId}/roster`);
+      state.modal = renderCourseRosterModal(offeringId);
+      renderShell();
+      toast('学生已退课');
     } else if (action === 'teacher-offerings') {
       state.routeData.teacherCourseData = await api(`/api/admin/teachers/${target.dataset.id}/offerings`);
       state.modal = renderTeacherOfferingsModal(target.dataset.id);
@@ -1528,14 +1554,20 @@ document.addEventListener('click', async (event) => {
     } else if (action === 'edit-teacher') {
       state.modal = renderEditTeacherModal(target.dataset.id);
       renderShell();
-    } else if (action === 'delete-student') {
-      if (!confirm('确定要删除该学生吗？')) return;
-      await api(`/api/admin/students/${target.dataset.id}`, { method: 'DELETE' });
-      await refresh('学生已删除');
-    } else if (action === 'delete-teacher') {
-      if (!confirm('确定要删除该教师吗？')) return;
-      await api(`/api/admin/teachers/${target.dataset.id}`, { method: 'DELETE' });
-      await refresh('教师已删除');
+    } else if (action === 'student-disable') {
+      if (!confirm('确定要弃用该学生吗？弃用后该学生不能登录，历史选课和成绩不受影响。')) return;
+      await api(`/api/admin/students/${target.dataset.id}/disable`, { method: 'POST' });
+      await refresh('学生已弃用');
+    } else if (action === 'student-enable') {
+      await api(`/api/admin/students/${target.dataset.id}/enable`, { method: 'POST' });
+      await refresh('学生已启用');
+    } else if (action === 'teacher-disable') {
+      if (!confirm('确定要弃用该教师吗？弃用后该教师不能登录，历史授课安排不受影响。')) return;
+      await api(`/api/admin/teachers/${target.dataset.id}/disable`, { method: 'POST' });
+      await refresh('教师已弃用');
+    } else if (action === 'teacher-enable') {
+      await api(`/api/admin/teachers/${target.dataset.id}/enable`, { method: 'POST' });
+      await refresh('教师已启用');
     } else if (action === 'admin-roster') {
       state.selected.adminRosterOfferingId = target.dataset.id;
       await loadRoute(true);
@@ -2262,7 +2294,7 @@ function gradeEntryTable(rows) {
   return `
     <div class="table-wrap grade-entry-wrap">
       <table class="grade-entry-table">
-        <thead><tr><th>学号</th><th>姓名</th><th>专业</th><th>邮箱</th><th>平时成绩</th><th>考试成绩</th><th>总评</th><th>绩点</th><th>操作</th></tr></thead>
+        <thead><tr><th class="col-id">学号</th><th class="col-name">姓名</th><th class="col-major">专业</th><th class="col-email">邮箱</th><th class="col-score">平时成绩</th><th class="col-score">考试成绩</th><th class="col-score">总评</th><th class="col-gpa">绩点</th><th class="col-actions">操作</th></tr></thead>
         <tbody>${rows.map((row) => `
           <tr data-enrollment-id="${row.enrollmentId}">
             <td>${text(row.studentNo)}</td>

@@ -1119,7 +1119,8 @@ textarea:focus-visible,
 
 table {
   width: 100%;
-  min-width: 880px;
+  min-width: 960px;
+  table-layout: fixed;
   border-collapse: collapse;
 }
 
@@ -1132,6 +1133,8 @@ td {
   font-size: 13px;
   vertical-align: middle;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 td input {
@@ -1160,6 +1163,92 @@ tbody tr:last-child td {
   display: flex;
   gap: 6px;
   align-items: center;
+}
+
+.col-id {
+  width: 112px;
+}
+
+.col-code {
+  width: 118px;
+}
+
+.col-name {
+  width: 132px;
+}
+
+.col-title,
+.col-room,
+.col-capacity,
+.col-status,
+.col-current,
+.col-credit,
+.col-ratio,
+.col-year,
+.col-score,
+.col-gpa {
+  width: 96px;
+}
+
+.col-gpa {
+  width: 78px;
+}
+
+.col-term {
+  width: 210px;
+}
+
+.col-date {
+  width: 230px;
+}
+
+.col-course {
+  width: 260px;
+}
+
+.col-time {
+  width: 230px;
+}
+
+.col-dept,
+.col-major {
+  width: 170px;
+}
+
+.col-email {
+  width: 250px;
+}
+
+.col-progress {
+  width: 150px;
+}
+
+.col-actions {
+  width: 240px;
+}
+
+.table-wrap table:has(.col-email) {
+  min-width: 980px;
+}
+
+.table-wrap table:has(.col-time) {
+  min-width: 1080px;
+}
+
+.table-wrap table:has(.col-actions) {
+  min-width: 1120px;
+}
+
+.table-wrap table:has(.col-time):has(.col-actions) {
+  min-width: 1180px;
+}
+
+.table-wrap table:has(.col-email):has(.col-actions) {
+  min-width: 1280px;
+}
+
+.table-wrap table:has(.col-score) {
+  min-width: 1240px;
 }
 
 .pager {
@@ -1622,6 +1711,45 @@ tbody tr:last-child td {
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.26);
+}
+
+.roster-modal {
+  width: min(1040px, calc(100vw - 40px));
+}
+
+.modal.roster-modal .table-wrap table {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.roster-modal th:nth-child(1),
+.roster-modal td:nth-child(1) {
+  width: 14%;
+}
+
+.roster-modal th:nth-child(2),
+.roster-modal td:nth-child(2) {
+  width: 14%;
+}
+
+.roster-modal th:nth-child(3),
+.roster-modal td:nth-child(3) {
+  width: 22%;
+}
+
+.roster-modal th:nth-child(4),
+.roster-modal td:nth-child(4) {
+  width: 38%;
+}
+
+.roster-modal th:nth-child(5),
+.roster-modal td:nth-child(5) {
+  width: 96px;
+}
+
+.roster-modal td:nth-child(4) {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .modal-header {
@@ -2161,12 +2289,20 @@ button.campus-card {
   grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr);
 }
 
-.grade-entry-wrap table {
-  min-width: 1040px;
+.table-wrap.grade-entry-wrap table.grade-entry-table {
+  min-width: 1320px;
 }
 
 .grade-entry-table td {
   height: 60px;
+}
+
+.grade-entry-table .col-score {
+  width: 150px;
+}
+
+.grade-entry-table .col-actions {
+  width: 112px;
 }
 
 .score-input {

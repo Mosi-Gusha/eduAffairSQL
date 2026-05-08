@@ -59,9 +59,6 @@ public interface AdminMapper {
     @Select("SELECT id FROM users WHERE username = #{username}")
     Long userIdByUsername(@Param("username") String username);
 
-    @Select("SELECT username FROM users WHERE id = #{userId}")
-    String usernameById(@Param("userId") Long userId);
-
     @Insert("""
             INSERT INTO users(username, password_hash, display_name, email, role_id)
             VALUES(#{username}, #{passwordHash}, #{displayName}, #{email}, #{roleId})
@@ -70,8 +67,8 @@ public interface AdminMapper {
                    @Param("displayName") String displayName, @Param("email") String email,
                    @Param("roleId") Long roleId);
 
-    @Update("UPDATE users SET status = 'disabled' WHERE id = #{userId}")
-    int disableUser(@Param("userId") Long userId);
+    @Update("UPDATE users SET status = #{status} WHERE id = #{userId}")
+    int updateUserStatus(@Param("userId") Long userId, @Param("status") String status);
 
     @Update("UPDATE users SET display_name = #{displayName} WHERE id = #{userId}")
     int updateUserDisplayName(@Param("userId") Long userId, @Param("displayName") String displayName);
@@ -82,9 +79,6 @@ public interface AdminMapper {
 
     @Update("UPDATE users SET email = #{email} WHERE id = #{userId}")
     int updateUserEmail(@Param("userId") Long userId, @Param("email") String email);
-
-    @Update("UPDATE users SET password_hash = #{passwordHash}, status = 'enabled' WHERE id = #{userId}")
-    int resetPassword(@Param("userId") Long userId, @Param("passwordHash") String passwordHash);
 
     @Select("""
             SELECT id, name, start_date AS startDate, end_date AS endDate,
