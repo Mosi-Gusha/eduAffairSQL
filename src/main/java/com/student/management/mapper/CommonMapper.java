@@ -51,7 +51,22 @@ public interface CommonMapper {
                    is_current AS isCurrent
               FROM semesters
              WHERE is_current = 1
-             LIMIT 1
+            LIMIT 1
             """)
     Map<String, Object> currentSemester();
+
+    @Select("""
+            <script>
+            SELECT id, offering_id AS offeringId, day_of_week AS dayOfWeek,
+                   start_section AS startSection, end_section AS endSection,
+                   start_week AS startWeek, end_week AS endWeek, week_type AS weekType
+              FROM course_offering_times
+             WHERE offering_id IN
+             <foreach collection="offeringIds" item="offeringId" open="(" separator="," close=")">
+               #{offeringId}
+             </foreach>
+             ORDER BY offering_id, day_of_week, start_section, start_week
+            </script>
+            """)
+    List<Map<String, Object>> offeringTimes(@Param("offeringIds") List<Long> offeringIds);
 }

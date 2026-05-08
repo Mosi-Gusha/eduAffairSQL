@@ -15,9 +15,7 @@ public interface StudentMapper {
     @Select("""
             <script>
             SELECT co.id, c.code AS courseCode, c.name AS courseName, c.credit,
-                   u.display_name AS teacherName, co.day_of_week AS dayOfWeek,
-                   co.start_section AS startSection, co.end_section AS endSection,
-                   co.week_type AS weekType, CONCAT(cr.building, cr.room_no) AS classroom,
+                   u.display_name AS teacherName, CONCAT(cr.building, cr.room_no) AS classroom,
                    co.capacity, co.selected_count AS selectedCount, co.status,
                    e.id AS enrollmentId, e.status AS enrollmentStatus,
                    EXISTS (
@@ -45,7 +43,7 @@ public interface StudentMapper {
                     OR u.display_name LIKE CONCAT('%', #{keyword}, '%')
                     OR CONCAT(cr.building, cr.room_no) LIKE CONCAT('%', #{keyword}, '%'))
              </if>
-             ORDER BY co.day_of_week, co.start_section
+             ORDER BY co.id
             </script>
             """)
     List<Map<String, Object>> listCurrentOfferings(@Param("studentId") Long studentId, @Param("semesterId") Long semesterId,
@@ -72,9 +70,8 @@ public interface StudentMapper {
 
     @Select("""
             SELECT e.id AS enrollmentId, c.code AS courseCode, c.name AS courseName, c.credit,
-                   u.display_name AS teacherName, co.day_of_week AS dayOfWeek,
-                   co.start_section AS startSection, co.end_section AS endSection,
-                   co.week_type AS weekType, CONCAT(cr.building, cr.room_no) AS classroom
+                   co.id AS offeringId, u.display_name AS teacherName,
+                   CONCAT(cr.building, cr.room_no) AS classroom
               FROM enrollments e
               JOIN course_offerings co ON co.id = e.offering_id
               JOIN courses c ON c.id = co.course_id
@@ -83,7 +80,7 @@ public interface StudentMapper {
               JOIN classrooms cr ON cr.id = co.classroom_id
               JOIN semesters s ON s.id = co.semester_id AND s.is_current = 1
              WHERE e.student_id = #{studentId} AND e.status = 'selected'
-             ORDER BY co.day_of_week, co.start_section
+             ORDER BY co.id
             """)
     List<Map<String, Object>> schedule(@Param("studentId") Long studentId);
 

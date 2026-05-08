@@ -56,7 +56,7 @@ public class StudentService {
             return AdminService.mapOf(
                     "semester", semester,
                     "selectionOpen", selectionOpen(),
-                    "rows", studentMapper.listCurrentOfferings(studentId, semesterId, keyword)
+                    "rows", withOfferingTimes(studentMapper.listCurrentOfferings(studentId, semesterId, keyword), "id")
             );
         });
     }
@@ -91,7 +91,7 @@ public class StudentService {
     public List<Map<String, Object>> schedule(SessionUser user) {
         Long studentId = studentId(user);
         return cache.get("student:" + studentId + ":schedule", LIST_TYPE,
-                () -> studentMapper.schedule(studentId));
+                () -> withOfferingTimes(studentMapper.schedule(studentId), "offeringId"));
     }
 
     public List<Map<String, Object>> grades(SessionUser user) {
@@ -122,6 +122,12 @@ public class StudentService {
 
     private void clearTeachingCaches() {
         cache.evictByPrefix("admin:", "student:", "teacher:");
+    }
+
+    private List<Map<String, Object>> withOfferingTimes(List<Map<String, Object>> rows, String idKey) {
+        List<Long> offeringIds = AdminService.offeringIds(rows, idKey);
+        List<Map<String, Object>> times = offeringIds.isEmpty() ? List.of() : commonMapper.offeringTimes(offeringIds);
+        return AdminService.attachOfferingTimes(rows, times, idKey);
     }
 
     private boolean selectionOpen() {

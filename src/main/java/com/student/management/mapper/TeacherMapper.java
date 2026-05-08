@@ -11,8 +11,7 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 public interface TeacherMapper {
     @Select("""
-            SELECT co.id, co.day_of_week AS dayOfWeek, co.start_section AS startSection,
-                   co.end_section AS endSection, co.week_type AS weekType, co.capacity, co.selected_count AS selectedCount,
+            SELECT co.id, co.capacity, co.selected_count AS selectedCount,
                    co.status, co.usual_ratio AS usualRatio, co.exam_ratio AS examRatio,
                    c.code AS courseCode, c.name AS courseName, c.credit,
                    s.id AS semesterId, s.name AS semesterName,
@@ -30,13 +29,12 @@ public interface TeacherMapper {
               JOIN users u ON u.id = t.user_id
               JOIN classrooms cr ON cr.id = co.classroom_id
              WHERE co.teacher_id = #{teacherId}
-             ORDER BY s.start_date DESC, co.day_of_week, co.start_section
+             ORDER BY s.start_date DESC, co.id
             """)
     List<Map<String, Object>> courses(@Param("teacherId") Long teacherId);
 
     @Select("""
-            SELECT co.id, co.day_of_week AS dayOfWeek, co.start_section AS startSection,
-                   co.end_section AS endSection, co.week_type AS weekType, co.capacity, co.selected_count AS selectedCount,
+            SELECT co.id, co.capacity, co.selected_count AS selectedCount,
                    co.status, c.code AS courseCode, c.name AS courseName, c.credit,
                    s.id AS semesterId, s.name AS semesterName,
                    CASE
@@ -55,10 +53,9 @@ public interface TeacherMapper {
               LEFT JOIN enrollments e ON e.offering_id = co.id AND e.status = 'selected'
               LEFT JOIN grades g ON g.enrollment_id = e.id
              WHERE co.teacher_id = #{teacherId}
-             GROUP BY co.id, co.day_of_week, co.start_section, co.end_section, co.week_type,
-                      co.capacity, co.selected_count, co.status, c.code, c.name, c.credit,
+             GROUP BY co.id, co.capacity, co.selected_count, co.status, c.code, c.name, c.credit,
                       s.id, s.name, s.start_date, s.end_date, cr.building, cr.room_no
-             ORDER BY s.start_date DESC, co.day_of_week, co.start_section
+             ORDER BY s.start_date DESC, co.id
             """)
     List<Map<String, Object>> gradeCourses(@Param("teacherId") Long teacherId);
 

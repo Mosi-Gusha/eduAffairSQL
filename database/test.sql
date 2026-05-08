@@ -8,6 +8,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS notices;
 DROP TABLE IF EXISTS grades;
 DROP TABLE IF EXISTS enrollments;
+DROP TABLE IF EXISTS course_offering_times;
 DROP TABLE IF EXISTS course_offerings;
 DROP TABLE IF EXISTS classrooms;
 DROP TABLE IF EXISTS courses;
@@ -29,7 +30,7 @@ CREATE TABLE roles (
 CREATE TABLE users (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   username VARCHAR(64) NOT NULL UNIQUE,
-  password_hash CHAR(64) NOT NULL,
+  password_hash VARCHAR(100) NOT NULL,
   display_name VARCHAR(80) NOT NULL,
   email VARCHAR(120) NOT NULL UNIQUE,
   role_id BIGINT NOT NULL,
@@ -107,10 +108,6 @@ CREATE TABLE course_offerings (
   semester_id BIGINT NOT NULL,
   teacher_id BIGINT NOT NULL,
   classroom_id BIGINT NOT NULL,
-  day_of_week TINYINT NOT NULL COMMENT '1-7, Monday is 1',
-  start_section TINYINT NOT NULL,
-  end_section TINYINT NOT NULL,
-  week_type ENUM('all','odd','even') NOT NULL DEFAULT 'all' COMMENT 'all/odd/even',
   capacity SMALLINT NOT NULL,
   selected_count SMALLINT NOT NULL DEFAULT 0,
   usual_ratio DECIMAL(4,2) NOT NULL DEFAULT 0.40,
@@ -119,9 +116,27 @@ CREATE TABLE course_offerings (
   CONSTRAINT fk_offerings_course FOREIGN KEY (course_id) REFERENCES courses(id),
   CONSTRAINT fk_offerings_semester FOREIGN KEY (semester_id) REFERENCES semesters(id),
   CONSTRAINT fk_offerings_teacher FOREIGN KEY (teacher_id) REFERENCES teachers(id),
-  CONSTRAINT fk_offerings_room FOREIGN KEY (classroom_id) REFERENCES classrooms(id),
+  CONSTRAINT fk_offerings_room FOREIGN KEY (classroom_id) REFERENCES classrooms(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE course_offering_times (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  offering_id BIGINT NOT NULL,
+  day_of_week TINYINT NOT NULL COMMENT '1-7, Monday is 1',
+  start_section TINYINT NOT NULL,
+  end_section TINYINT NOT NULL,
+  start_week TINYINT NOT NULL DEFAULT 1,
+  end_week TINYINT NOT NULL DEFAULT 16,
+  week_type ENUM('all','odd','even') NOT NULL DEFAULT 'all' COMMENT 'all/odd/even',
+  CONSTRAINT fk_offering_times_offering FOREIGN KEY (offering_id) REFERENCES course_offerings(id) ON DELETE CASCADE,
   CHECK (day_of_week BETWEEN 1 AND 7),
-  CHECK (start_section <= end_section)
+  CHECK (start_section BETWEEN 1 AND 12),
+  CHECK (end_section BETWEEN 1 AND 12),
+  CHECK (start_section <= end_section),
+  CHECK (start_week BETWEEN 1 AND 30),
+  CHECK (end_week BETWEEN 1 AND 30),
+  CHECK (start_week <= end_week),
+  INDEX idx_offering_times_lookup (offering_id, day_of_week, start_section, end_section)
 ) ENGINE=InnoDB;
 
 CREATE TABLE enrollments (
@@ -261,10 +276,6 @@ BEGIN
   DECLARE v_is_current TINYINT;
   DECLARE v_semester BIGINT;
   DECLARE v_course BIGINT;
-  DECLARE v_day TINYINT;
-  DECLARE v_start TINYINT;
-  DECLARE v_end TINYINT;
-  DECLARE v_week_type VARCHAR(8);
   DECLARE v_credit DECIMAL(3,1);
   DECLARE v_max_credit DECIMAL(5,1);
   DECLARE v_current_credit DECIMAL(5,1);
@@ -275,11 +286,9 @@ BEGIN
   DECLARE v_sem_end DATE;
 
   SELECT co.capacity, co.selected_count, co.status, co.semester_id, co.course_id,
-         co.day_of_week, co.start_section, co.end_section, co.week_type, c.credit,
-         s.is_current, s.start_date, s.end_date, s.max_credit
+         c.credit, s.is_current, s.start_date, s.end_date, s.max_credit
     INTO v_capacity, v_selected, v_status, v_semester, v_course,
-         v_day, v_start, v_end, v_week_type, v_credit,
-         v_is_current, v_sem_start, v_sem_end, v_max_credit
+         v_credit, v_is_current, v_sem_start, v_sem_end, v_max_credit
     FROM course_offerings co
     JOIN courses c ON c.id = co.course_id
     JOIN semesters s ON s.id = co.semester_id
@@ -318,12 +327,19 @@ BEGIN
     INTO v_conflict
     FROM enrollments e
     JOIN course_offerings co ON co.id = e.offering_id
+    JOIN course_offering_times selected_time ON selected_time.offering_id = p_offering_id
+    JOIN course_offering_times existing_time ON existing_time.offering_id = co.id
    WHERE e.student_id = p_student_id
      AND e.status = 'selected'
      AND co.semester_id = v_semester
-     AND co.day_of_week = v_day
-     AND NOT (co.end_section < v_start OR co.start_section > v_end)
-     AND (co.week_type = 'all' OR v_week_type = 'all' OR co.week_type = v_week_type);
+     AND existing_time.day_of_week = selected_time.day_of_week
+     AND NOT (existing_time.end_section < selected_time.start_section
+              OR existing_time.start_section > selected_time.end_section)
+     AND NOT (existing_time.end_week < selected_time.start_week
+              OR existing_time.start_week > selected_time.end_week)
+     AND (existing_time.week_type = 'all'
+          OR selected_time.week_type = 'all'
+          OR existing_time.week_type = selected_time.week_type);
 
   IF v_is_current <> 1 THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '当前学期未设置';
@@ -356,37 +372,37 @@ INSERT INTO roles(id, code, name) VALUES
 (3, 'student', '学生');
 
 INSERT INTO users(id, username, password_hash, display_name, email, role_id, status, created_at) VALUES
-(1, 'admin', SHA2('admin', 256), '教务管理员', 'admin@school.edu.cn', 1, 'enabled', CURRENT_TIMESTAMP),
-(2, 't1', SHA2('t1', 256), '张明', 't1@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
-(3, 't2', SHA2('t2', 256), '李华', 't2@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
-(4, 't3', SHA2('t3', 256), '王敏', 't3@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
-(5, 't4', SHA2('t4', 256), '陈伟', 't4@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
-(6, 't5', SHA2('t5', 256), '刘芳', 't5@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
-(7, 't6', SHA2('t6', 256), '赵强', 't6@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
-(8, 't7', SHA2('t7', 256), '周琳', 't7@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
-(9, 't8', SHA2('t8', 256), '孙杰', 't8@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
-(10, 't9', SHA2('t9', 256), '黄磊', 't9@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
-(11, 't10', SHA2('t10', 256), '吴倩', 't10@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
-(12, 's1', SHA2('s1', 256), '周襦', 's1@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(13, 's2', SHA2('s2', 256), '陈晨', 's2@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(14, 's3', SHA2('s3', 256), '周雨', 's3@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(15, 's4', SHA2('s4', 256), '王浩', 's4@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(16, 's5', SHA2('s5', 256), '刘欣', 's5@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(17, 's6', SHA2('s6', 256), '赵阳', 's6@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(18, 's7', SHA2('s7', 256), '孙悦', 's7@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(19, 's8', SHA2('s8', 256), '黄宇', 's8@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(20, 's9', SHA2('s9', 256), '吴迪', 's9@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(21, 's10', SHA2('s10', 256), '郑雪', 's10@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(22, 's11', SHA2('s11', 256), '康榕', 's11@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(23, 's12', SHA2('s12', 256), '谢昪', 's12@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(24, 's13', SHA2('s13', 256), '广律', 's13@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(25, 's14', SHA2('s14', 256), '詹贤', 's14@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(26, 's15', SHA2('s15', 256), '濮佳', 's15@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(27, 's16', SHA2('s16', 256), '阚文', 's16@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(28, 's17', SHA2('s17', 256), '牧昱', 's17@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(29, 's18', SHA2('s18', 256), '盖虚', 's18@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(30, 's19', SHA2('s19', 256), '权孜', 's19@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
-(31, 's20', SHA2('s20', 256), '魏亨', 's20@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP);
+(1, 'admin', '$2a$12$VCRhAfYLLRORBayYZJxP/e1hh3LsxdBzJtxNo3c4pzq05F8EGbsK6', '教务管理员', 'admin@school.edu.cn', 1, 'enabled', CURRENT_TIMESTAMP),
+(2, 't1', '$2a$12$JcQvNUJeR4KOoMeMC6Go5utTRDvBU1Cu1AJYwQC5GSW8RWlf0/3qG', '张明', 't1@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
+(3, 't2', '$2a$12$gyjuA1wIPVl1gScz04c3R.8BC6e7bAzSyESxh5ztax48CRMsYZqBi', '李华', 't2@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
+(4, 't3', '$2a$12$EDNSQY4H62HPyXGshlt3b.2LaugU3AldtMXQaQPInVialQjbLsEnu', '王敏', 't3@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
+(5, 't4', '$2a$12$WmcuNtifWd9YMiXjR9JYB.VTfiMPK9dvi4/VFKc0DayI8pymwEUBu', '陈伟', 't4@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
+(6, 't5', '$2a$12$uS.2mKCC6sHFIc/7ui6dPetAmI.yp1fgGBlqf.l1bqyud8rgQZw7i', '刘芳', 't5@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
+(7, 't6', '$2a$12$ZQzueIC3QSiTpGJyvj3sCu4Zcs8yonf4P.RwT6VRTfzhRvgtauA7q', '赵强', 't6@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
+(8, 't7', '$2a$12$O9IPnv8//nRjw8eY5K5jtuIGOkxOoB5hq/Ky1pj4OuRyHTDclJjBO', '周琳', 't7@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
+(9, 't8', '$2a$12$Raqhwjv42HqLchMR8gMqRu3IsgxBGDCknQeY3fbyAalFZeR4HQD52', '孙杰', 't8@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
+(10, 't9', '$2a$12$l3ZvW6C8M3x2OJv5E2izUOfiGSIgFVt0V.SsEIFSp6RLQDtEJiMnu', '黄磊', 't9@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
+(11, 't10', '$2a$12$fN1Ud15iGbXxZ.J1U1pR1.8N5Wo3shPFezMzkXSSc6ildEGJTcslu', '吴倩', 't10@teacher.school.edu.cn', 2, 'enabled', CURRENT_TIMESTAMP),
+(12, 's1', '$2a$12$9Woiqim64Cgq0dGBddqRres5qONZgA40TjTljK19butKnliYkOCiu', '周襦', 's1@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(13, 's2', '$2a$12$EhUG6P.0iOk2Sw0DtPzQ7.BIyTBGg/6Ukesq/tZHAZJ.4drfbypQe', '陈晨', 's2@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(14, 's3', '$2a$12$yjcCsi45b/Z.Cd9jixzpeONFBvOD1rMq8LMWowl26KK5uOOqAJleq', '周雨', 's3@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(15, 's4', '$2a$12$EVRSOXvncH4LEjv9BVsN/eSWaKQtytlixa9F1i2Ubk3ceqqSUcwVW', '王浩', 's4@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(16, 's5', '$2a$12$cbDJ2ewIk56L1xTQrOVnSOxaAkN9nSD51peE3rEBAVYTwhdVHfxRO', '刘欣', 's5@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(17, 's6', '$2a$12$VU0rCFMhKPHdfY5WA3LyVexQUzXnZl4I8ukUM7WRdlsWI3eHGftPq', '赵阳', 's6@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(18, 's7', '$2a$12$Ktig2oSsFCZeXZcer36zbOt/N6.l.sWJ6fUsfe6mKxfVISoUPi6Nu', '孙悦', 's7@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(19, 's8', '$2a$12$5yF0OHUWCokre0UmsqrU2OMiyRT8Eo.wjsWHJ03YQ6WsnIy/eUkDC', '黄宇', 's8@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(20, 's9', '$2a$12$/tmspDk3ESi1iVtvTPUuOOpTXsY0TSOQVhgaeFd5xKaLTbBtkHjtO', '吴迪', 's9@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(21, 's10', '$2a$12$pva6S9YNhXUhaiSJ3D9b.eM/oJh2hrJFKhatUkFPY8cTAXSdHhChq', '郑雪', 's10@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(22, 's11', '$2a$12$x9JpMjqVuFwrIkUiH3LvIuKVaGfaqLUff1Q5QX57H9EqocXeAkWOG', '康榕', 's11@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(23, 's12', '$2a$12$k5dGIClfw7/OiRJDCo3ZmOOKRjhlM7Afac6rGSVHOo57WBSNhvr9S', '谢昪', 's12@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(24, 's13', '$2a$12$GeijYl9LG/0MTEg8BQ3spO/3lQE/KPXM7UEZcuL0k9knZ4axwbbCa', '广律', 's13@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(25, 's14', '$2a$12$TXIGM41ow87l06NOGJqPAeBfZhSGKBT4sNXaukNeVZuqOvgMGXihy', '詹贤', 's14@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(26, 's15', '$2a$12$IcaI5lh4/llI6sxqi9QIKOkIkF02Jtq18Qn8OoDeNQTBMVtxyKHT6', '濮佳', 's15@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(27, 's16', '$2a$12$y7pP6fNGMkIU6xP7n1kdR.aMqyAHV6VMfKEon4rvXEcQ1keZsPLU2', '阚文', 's16@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(28, 's17', '$2a$12$yLObE27idzeBlGmFcmdTce7GZIPKDkiE2CVcCfKU4IW7oURcRbq2C', '牧昱', 's17@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(29, 's18', '$2a$12$VOUzegNK95bB.028bB71/uqVwOO0kOxPt1yMTv7iqC2W0r1qE69.S', '盖虚', 's18@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(30, 's19', '$2a$12$170umxvOFE/Vnyh61f1PAuDtiWkMKeCagC4Woslqi9dnWj037n02q', '权孜', 's19@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP),
+(31, 's20', '$2a$12$Jteqfn2fObnIwIaXj0l4muze9TvHIYdJrDaM.gpYkmI9GQFYFDAsa', '魏亨', 's20@student.school.edu.cn', 3, 'enabled', CURRENT_TIMESTAMP);
 
 INSERT INTO departments(id, name, phone) VALUES
 (1, '计算机学院', '010-6001001'),
@@ -509,79 +525,153 @@ INSERT INTO classrooms(id, building, room_no, capacity) VALUES
 (11, '实验楼', '305', 45),
 (12, 'A', '501', 55);
 
-INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, day_of_week, start_section, end_section, week_type, capacity, selected_count, usual_ratio, exam_ratio, status) VALUES
-(1, 1, 1, 1, 1, 1, 1, 2, 'all', 80, 0, 0.40, 0.60, 'selecting'),
-(2, 2, 1, 2, 2, 2, 3, 4, 'all', 70, 0, 0.30, 0.70, 'selecting'),
-(3, 3, 1, 3, 3, 3, 1, 2, 'all', 120, 0, 0.40, 0.60, 'selecting'),
-(4, 4, 1, 4, 4, 4, 3, 4, 'all', 100, 0, 0.50, 0.50, 'selecting'),
-(5, 5, 1, 5, 5, 5, 1, 2, 'all', 90, 0, 0.40, 0.60, 'selecting'),
-(6, 6, 1, 6, 6, 1, 5, 6, 'all', 60, 0, 0.30, 0.70, 'selecting'),
-(7, 7, 1, 7, 7, 2, 7, 8, 'all', 150, 0, 0.50, 0.50, 'selecting'),
-(8, 8, 1, 8, 8, 3, 7, 8, 'all', 40, 0, 0.70, 0.30, 'selecting'),
-(9, 9, 1, 9, 9, 4, 5, 6, 'all', 75, 0, 0.40, 0.60, 'selecting'),
-(10, 10, 1, 10, 10, 5, 3, 4, 'all', 45, 0, 0.50, 0.50, 'selecting'),
-(11, 11, 1, 1, 1, 2, 1, 2, 'all', 80, 0, 0.40, 0.60, 'selecting'),
-(12, 12, 1, 2, 2, 3, 3, 4, 'all', 70, 0, 0.40, 0.60, 'selecting'),
-(13, 13, 1, 3, 3, 1, 3, 4, 'all', 110, 0, 0.40, 0.60, 'selecting'),
-(14, 14, 1, 4, 4, 2, 5, 6, 'all', 55, 0, 0.60, 0.40, 'selecting'),
-(15, 15, 1, 5, 5, 3, 5, 6, 'all', 80, 0, 0.40, 0.60, 'selecting'),
-(16, 16, 1, 6, 6, 4, 1, 2, 'all', 60, 0, 0.30, 0.70, 'selecting'),
-(17, 17, 1, 7, 7, 5, 5, 6, 'all', 120, 0, 0.50, 0.50, 'selecting'),
-(18, 18, 1, 8, 8, 1, 7, 8, 'all', 36, 0, 0.70, 0.30, 'selecting'),
-(19, 19, 1, 9, 9, 2, 3, 4, 'all', 60, 0, 0.40, 0.60, 'selecting'),
-(20, 20, 1, 10, 10, 4, 7, 8, 'all', 48, 0, 0.50, 0.50, 'selecting'),
-(21, 21, 1, 1, 11, 5, 7, 8, 'all', 45, 0, 0.60, 0.40, 'selecting'),
-(22, 22, 1, 2, 2, 1, 5, 6, 'all', 50, 0, 0.40, 0.60, 'selecting'),
-(23, 23, 1, 3, 3, 2, 1, 2, 'all', 100, 0, 0.40, 0.60, 'selecting'),
-(24, 24, 1, 4, 4, 3, 7, 8, 'all', 60, 0, 0.50, 0.50, 'selecting'),
-(25, 25, 1, 5, 5, 4, 3, 4, 'all', 75, 0, 0.40, 0.60, 'selecting'),
-(26, 26, 1, 6, 6, 5, 1, 2, 'all', 45, 0, 0.40, 0.60, 'selecting'),
-(27, 27, 1, 7, 7, 1, 1, 2, 'all', 140, 0, 0.50, 0.50, 'selecting'),
-(28, 28, 1, 8, 8, 2, 7, 8, 'all', 35, 0, 0.70, 0.30, 'selecting'),
-(29, 29, 1, 9, 12, 3, 5, 6, 'all', 55, 0, 0.40, 0.60, 'selecting'),
-(30, 30, 1, 10, 10, 5, 3, 4, 'all', 40, 0, 0.50, 0.50, 'selecting'),
-(31, 31, 1, 1, 1, 1, 3, 4, 'all', 65, 0, 0.40, 0.60, 'selecting'),
-(32, 32, 1, 2, 2, 2, 5, 6, 'all', 50, 0, 0.40, 0.60, 'selecting'),
-(33, 33, 1, 3, 3, 4, 5, 6, 'all', 80, 0, 0.60, 0.40, 'selecting'),
-(34, 34, 1, 4, 4, 5, 5, 6, 'all', 50, 0, 0.50, 0.50, 'selecting'),
-(35, 35, 1, 5, 5, 1, 7, 8, 'all', 70, 0, 0.50, 0.50, 'selecting'),
-(36, 36, 1, 6, 6, 2, 1, 2, 'all', 55, 0, 0.40, 0.60, 'selecting'),
-(37, 37, 1, 7, 7, 3, 3, 4, 'all', 95, 0, 0.50, 0.50, 'selecting'),
-(38, 38, 1, 8, 8, 4, 7, 8, 'all', 32, 0, 0.70, 0.30, 'selecting'),
-(39, 39, 1, 9, 9, 5, 1, 2, 'all', 60, 0, 0.50, 0.50, 'selecting'),
-(40, 40, 1, 10, 10, 3, 1, 2, 'all', 42, 0, 0.50, 0.50, 'closed');
+INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, capacity, selected_count, usual_ratio, exam_ratio, status) VALUES
+(1, 1, 1, 1, 1, 80, 0, 0.40, 0.60, 'selecting'),
+(2, 2, 1, 2, 2, 70, 0, 0.30, 0.70, 'selecting'),
+(3, 3, 1, 3, 3, 120, 0, 0.40, 0.60, 'selecting'),
+(4, 4, 1, 4, 4, 100, 0, 0.50, 0.50, 'selecting'),
+(5, 5, 1, 5, 5, 90, 0, 0.40, 0.60, 'selecting'),
+(6, 6, 1, 6, 6, 60, 0, 0.30, 0.70, 'selecting'),
+(7, 7, 1, 7, 7, 150, 0, 0.50, 0.50, 'selecting'),
+(8, 8, 1, 8, 8, 40, 0, 0.70, 0.30, 'selecting'),
+(9, 9, 1, 9, 9, 75, 0, 0.40, 0.60, 'selecting'),
+(10, 10, 1, 10, 10, 45, 0, 0.50, 0.50, 'selecting'),
+(11, 11, 1, 1, 1, 80, 0, 0.40, 0.60, 'selecting'),
+(12, 12, 1, 2, 2, 70, 0, 0.40, 0.60, 'selecting'),
+(13, 13, 1, 3, 3, 110, 0, 0.40, 0.60, 'selecting'),
+(14, 14, 1, 4, 4, 55, 0, 0.60, 0.40, 'selecting'),
+(15, 15, 1, 5, 5, 80, 0, 0.40, 0.60, 'selecting'),
+(16, 16, 1, 6, 6, 60, 0, 0.30, 0.70, 'selecting'),
+(17, 17, 1, 7, 7, 120, 0, 0.50, 0.50, 'selecting'),
+(18, 18, 1, 8, 8, 36, 0, 0.70, 0.30, 'selecting'),
+(19, 19, 1, 9, 9, 60, 0, 0.40, 0.60, 'selecting'),
+(20, 20, 1, 10, 10, 48, 0, 0.50, 0.50, 'selecting'),
+(21, 21, 1, 1, 11, 45, 0, 0.60, 0.40, 'selecting'),
+(22, 22, 1, 2, 2, 50, 0, 0.40, 0.60, 'selecting'),
+(23, 23, 1, 3, 3, 100, 0, 0.40, 0.60, 'selecting'),
+(24, 24, 1, 4, 4, 60, 0, 0.50, 0.50, 'selecting'),
+(25, 25, 1, 5, 5, 75, 0, 0.40, 0.60, 'selecting'),
+(26, 26, 1, 6, 6, 45, 0, 0.40, 0.60, 'selecting'),
+(27, 27, 1, 7, 7, 140, 0, 0.50, 0.50, 'selecting'),
+(28, 28, 1, 8, 8, 35, 0, 0.70, 0.30, 'selecting'),
+(29, 29, 1, 9, 12, 55, 0, 0.40, 0.60, 'selecting'),
+(30, 30, 1, 10, 10, 40, 0, 0.50, 0.50, 'selecting'),
+(31, 31, 1, 1, 1, 65, 0, 0.40, 0.60, 'selecting'),
+(32, 32, 1, 2, 2, 50, 0, 0.40, 0.60, 'selecting'),
+(33, 33, 1, 3, 3, 80, 0, 0.60, 0.40, 'selecting'),
+(34, 34, 1, 4, 4, 50, 0, 0.50, 0.50, 'selecting'),
+(35, 35, 1, 5, 5, 70, 0, 0.50, 0.50, 'selecting'),
+(36, 36, 1, 6, 6, 55, 0, 0.40, 0.60, 'selecting'),
+(37, 37, 1, 7, 7, 95, 0, 0.50, 0.50, 'selecting'),
+(38, 38, 1, 8, 8, 32, 0, 0.70, 0.30, 'selecting'),
+(39, 39, 1, 9, 9, 60, 0, 0.50, 0.50, 'selecting'),
+(40, 40, 1, 10, 10, 42, 0, 0.50, 0.50, 'closed');
 
-INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, day_of_week, start_section, end_section, week_type, capacity, selected_count, usual_ratio, exam_ratio, status) VALUES
-(41, 1, 2, 1, 1, 1, 1, 2, 'all', 80, 0, 0.40, 0.60, 'closed'),
-(42, 2, 2, 2, 2, 2, 3, 4, 'all', 70, 0, 0.30, 0.70, 'closed'),
-(43, 3, 2, 3, 3, 3, 1, 2, 'all', 120, 0, 0.40, 0.60, 'closed'),
-(44, 4, 2, 4, 4, 4, 3, 4, 'all', 100, 0, 0.50, 0.50, 'closed'),
-(45, 5, 2, 5, 5, 5, 1, 2, 'all', 90, 0, 0.40, 0.60, 'closed'),
-(46, 6, 2, 6, 6, 1, 5, 6, 'all', 60, 0, 0.30, 0.70, 'closed'),
-(47, 7, 2, 7, 7, 2, 7, 8, 'all', 150, 0, 0.50, 0.50, 'closed'),
-(48, 8, 2, 8, 8, 3, 7, 8, 'all', 40, 0, 0.70, 0.30, 'closed'),
-(49, 9, 2, 9, 9, 4, 5, 6, 'all', 75, 0, 0.40, 0.60, 'closed'),
-(50, 10, 2, 10, 10, 5, 3, 4, 'all', 45, 0, 0.50, 0.50, 'closed'),
-(51, 11, 2, 1, 1, 2, 1, 2, 'all', 80, 0, 0.40, 0.60, 'closed'),
-(52, 12, 2, 2, 2, 3, 3, 4, 'all', 70, 0, 0.40, 0.60, 'closed'),
-(53, 13, 2, 3, 3, 1, 3, 4, 'all', 110, 0, 0.40, 0.60, 'closed'),
-(54, 14, 2, 4, 4, 2, 5, 6, 'all', 55, 0, 0.60, 0.40, 'closed'),
-(55, 15, 2, 5, 5, 3, 5, 6, 'all', 80, 0, 0.40, 0.60, 'closed'),
-(56, 16, 2, 6, 6, 4, 1, 2, 'all', 60, 0, 0.30, 0.70, 'closed'),
-(57, 17, 2, 7, 7, 5, 5, 6, 'all', 120, 0, 0.50, 0.50, 'closed'),
-(58, 18, 2, 8, 8, 1, 7, 8, 'all', 36, 0, 0.70, 0.30, 'closed'),
-(59, 19, 2, 9, 9, 2, 3, 4, 'all', 60, 0, 0.40, 0.60, 'closed'),
-(60, 20, 2, 10, 10, 4, 7, 8, 'all', 48, 0, 0.50, 0.50, 'closed'),
-(61, 1, 3, 1, 1, 1, 1, 2, 'all', 80, 0, 0.40, 0.60, 'closed'),
-(62, 2, 3, 2, 2, 2, 3, 4, 'all', 70, 0, 0.30, 0.70, 'closed'),
-(63, 3, 3, 3, 3, 3, 1, 2, 'all', 120, 0, 0.40, 0.60, 'closed'),
-(64, 4, 3, 4, 4, 4, 3, 4, 'all', 100, 0, 0.50, 0.50, 'closed'),
-(65, 5, 3, 5, 5, 5, 1, 2, 'all', 90, 0, 0.40, 0.60, 'closed'),
-(66, 6, 3, 6, 6, 1, 5, 6, 'all', 60, 0, 0.30, 0.70, 'closed'),
-(67, 7, 3, 7, 7, 2, 7, 8, 'all', 150, 0, 0.50, 0.50, 'closed'),
-(68, 8, 3, 8, 8, 3, 7, 8, 'all', 40, 0, 0.70, 0.30, 'closed'),
-(69, 9, 3, 9, 9, 4, 5, 6, 'all', 75, 0, 0.40, 0.60, 'closed'),
-(70, 10, 3, 10, 10, 5, 3, 4, 'all', 45, 0, 0.50, 0.50, 'closed');
+INSERT INTO course_offering_times(id, offering_id, day_of_week, start_section, end_section, start_week, end_week, week_type) VALUES
+(1, 1, 1, 1, 2, 1, 16, 'all'),
+(2, 2, 2, 3, 4, 1, 16, 'all'),
+(3, 3, 3, 1, 2, 1, 16, 'all'),
+(4, 4, 4, 3, 4, 1, 16, 'all'),
+(5, 5, 5, 1, 2, 1, 16, 'all'),
+(6, 6, 1, 5, 6, 1, 16, 'all'),
+(7, 7, 2, 7, 8, 1, 16, 'all'),
+(8, 8, 3, 7, 8, 1, 16, 'all'),
+(9, 9, 4, 5, 6, 1, 16, 'all'),
+(10, 10, 5, 3, 4, 1, 16, 'all'),
+(11, 11, 2, 1, 2, 1, 16, 'all'),
+(12, 12, 3, 3, 4, 1, 16, 'all'),
+(13, 13, 1, 3, 4, 1, 16, 'all'),
+(14, 14, 2, 5, 6, 1, 16, 'all'),
+(15, 15, 3, 5, 6, 1, 16, 'all'),
+(16, 16, 4, 1, 2, 1, 16, 'all'),
+(17, 17, 5, 5, 6, 1, 16, 'all'),
+(18, 18, 1, 7, 8, 1, 16, 'all'),
+(19, 19, 2, 3, 4, 1, 16, 'all'),
+(20, 20, 4, 7, 8, 1, 16, 'all'),
+(21, 21, 5, 7, 8, 1, 16, 'all'),
+(22, 22, 1, 5, 6, 1, 16, 'all'),
+(23, 23, 2, 1, 2, 1, 16, 'all'),
+(24, 24, 3, 7, 8, 1, 16, 'all'),
+(25, 25, 4, 3, 4, 1, 16, 'all'),
+(26, 26, 5, 1, 2, 1, 16, 'all'),
+(27, 27, 1, 1, 2, 1, 16, 'all'),
+(28, 28, 2, 7, 8, 1, 16, 'all'),
+(29, 29, 3, 5, 6, 1, 16, 'all'),
+(30, 30, 5, 3, 4, 1, 16, 'all'),
+(31, 31, 1, 3, 4, 1, 16, 'all'),
+(32, 32, 2, 5, 6, 1, 16, 'all'),
+(33, 33, 4, 5, 6, 1, 16, 'all'),
+(34, 34, 5, 5, 6, 1, 16, 'all'),
+(35, 35, 1, 7, 8, 1, 16, 'all'),
+(36, 36, 2, 1, 2, 1, 16, 'all'),
+(37, 37, 3, 3, 4, 1, 16, 'all'),
+(38, 38, 4, 7, 8, 1, 16, 'all'),
+(39, 39, 5, 1, 2, 1, 16, 'all'),
+(40, 40, 3, 1, 2, 1, 16, 'all');
+
+INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, capacity, selected_count, usual_ratio, exam_ratio, status) VALUES
+(41, 1, 2, 1, 1, 80, 0, 0.40, 0.60, 'closed'),
+(42, 2, 2, 2, 2, 70, 0, 0.30, 0.70, 'closed'),
+(43, 3, 2, 3, 3, 120, 0, 0.40, 0.60, 'closed'),
+(44, 4, 2, 4, 4, 100, 0, 0.50, 0.50, 'closed'),
+(45, 5, 2, 5, 5, 90, 0, 0.40, 0.60, 'closed'),
+(46, 6, 2, 6, 6, 60, 0, 0.30, 0.70, 'closed'),
+(47, 7, 2, 7, 7, 150, 0, 0.50, 0.50, 'closed'),
+(48, 8, 2, 8, 8, 40, 0, 0.70, 0.30, 'closed'),
+(49, 9, 2, 9, 9, 75, 0, 0.40, 0.60, 'closed'),
+(50, 10, 2, 10, 10, 45, 0, 0.50, 0.50, 'closed'),
+(51, 11, 2, 1, 1, 80, 0, 0.40, 0.60, 'closed'),
+(52, 12, 2, 2, 2, 70, 0, 0.40, 0.60, 'closed'),
+(53, 13, 2, 3, 3, 110, 0, 0.40, 0.60, 'closed'),
+(54, 14, 2, 4, 4, 55, 0, 0.60, 0.40, 'closed'),
+(55, 15, 2, 5, 5, 80, 0, 0.40, 0.60, 'closed'),
+(56, 16, 2, 6, 6, 60, 0, 0.30, 0.70, 'closed'),
+(57, 17, 2, 7, 7, 120, 0, 0.50, 0.50, 'closed'),
+(58, 18, 2, 8, 8, 36, 0, 0.70, 0.30, 'closed'),
+(59, 19, 2, 9, 9, 60, 0, 0.40, 0.60, 'closed'),
+(60, 20, 2, 10, 10, 48, 0, 0.50, 0.50, 'closed'),
+(61, 1, 3, 1, 1, 80, 0, 0.40, 0.60, 'closed'),
+(62, 2, 3, 2, 2, 70, 0, 0.30, 0.70, 'closed'),
+(63, 3, 3, 3, 3, 120, 0, 0.40, 0.60, 'closed'),
+(64, 4, 3, 4, 4, 100, 0, 0.50, 0.50, 'closed'),
+(65, 5, 3, 5, 5, 90, 0, 0.40, 0.60, 'closed'),
+(66, 6, 3, 6, 6, 60, 0, 0.30, 0.70, 'closed'),
+(67, 7, 3, 7, 7, 150, 0, 0.50, 0.50, 'closed'),
+(68, 8, 3, 8, 8, 40, 0, 0.70, 0.30, 'closed'),
+(69, 9, 3, 9, 9, 75, 0, 0.40, 0.60, 'closed'),
+(70, 10, 3, 10, 10, 45, 0, 0.50, 0.50, 'closed');
+
+INSERT INTO course_offering_times(id, offering_id, day_of_week, start_section, end_section, start_week, end_week, week_type) VALUES
+(41, 41, 1, 1, 2, 1, 16, 'all'),
+(42, 42, 2, 3, 4, 1, 16, 'all'),
+(43, 43, 3, 1, 2, 1, 16, 'all'),
+(44, 44, 4, 3, 4, 1, 16, 'all'),
+(45, 45, 5, 1, 2, 1, 16, 'all'),
+(46, 46, 1, 5, 6, 1, 16, 'all'),
+(47, 47, 2, 7, 8, 1, 16, 'all'),
+(48, 48, 3, 7, 8, 1, 16, 'all'),
+(49, 49, 4, 5, 6, 1, 16, 'all'),
+(50, 50, 5, 3, 4, 1, 16, 'all'),
+(51, 51, 2, 1, 2, 1, 16, 'all'),
+(52, 52, 3, 3, 4, 1, 16, 'all'),
+(53, 53, 1, 3, 4, 1, 16, 'all'),
+(54, 54, 2, 5, 6, 1, 16, 'all'),
+(55, 55, 3, 5, 6, 1, 16, 'all'),
+(56, 56, 4, 1, 2, 1, 16, 'all'),
+(57, 57, 5, 5, 6, 1, 16, 'all'),
+(58, 58, 1, 7, 8, 1, 16, 'all'),
+(59, 59, 2, 3, 4, 1, 16, 'all'),
+(60, 60, 4, 7, 8, 1, 16, 'all'),
+(61, 61, 1, 1, 2, 1, 16, 'all'),
+(62, 62, 2, 3, 4, 1, 16, 'all'),
+(63, 63, 3, 1, 2, 1, 16, 'all'),
+(64, 64, 4, 3, 4, 1, 16, 'all'),
+(65, 65, 5, 1, 2, 1, 16, 'all'),
+(66, 66, 1, 5, 6, 1, 16, 'all'),
+(67, 67, 2, 7, 8, 1, 16, 'all'),
+(68, 68, 3, 7, 8, 1, 16, 'all'),
+(69, 69, 4, 5, 6, 1, 16, 'all'),
+(70, 70, 5, 3, 4, 1, 16, 'all');
 
 INSERT INTO enrollments(id, student_id, offering_id, status, selected_at, dropped_at) VALUES
 (1, 1, 21, 'selected', CURRENT_TIMESTAMP, NULL),

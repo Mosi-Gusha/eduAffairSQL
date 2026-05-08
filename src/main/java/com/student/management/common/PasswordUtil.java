@@ -1,24 +1,18 @@
 package com.student.management.common;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 public final class PasswordUtil {
+    private static final BCryptPasswordEncoder ENCODER = new BCryptPasswordEncoder(12);
+
     private PasswordUtil() {
     }
 
-    public static String sha256(String raw) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] bytes = digest.digest(raw.getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder(bytes.length * 2);
-            for (byte item : bytes) {
-                builder.append(String.format("%02x", item));
-            }
-            return builder.toString();
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is not available", exception);
-        }
+    public static String hash(String raw) {
+        return ENCODER.encode(raw);
+    }
+
+    public static boolean matches(String raw, String hash) {
+        return raw != null && hash != null && ENCODER.matches(raw, hash);
     }
 }

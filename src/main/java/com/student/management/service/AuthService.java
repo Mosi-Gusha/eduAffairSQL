@@ -31,7 +31,7 @@ public class AuthService {
         }
 
         String passwordHash = MapUtil.stringValue(row, "passwordHash");
-        if (!PasswordUtil.sha256(request.password()).equals(passwordHash)) {
+        if (!PasswordUtil.matches(request.password(), passwordHash)) {
             throw new ApiException(401, "用户名或密码错误");
         }
 
@@ -66,13 +66,13 @@ public class AuthService {
 
     public Map<String, Object> changePassword(SessionUser user, ChangePasswordRequest request) {
         String currentHash = authMapper.passwordHashByUserId(user.id());
-        if (!PasswordUtil.sha256(request.oldPassword()).equals(currentHash)) {
+        if (!PasswordUtil.matches(request.oldPassword(), currentHash)) {
             throw new ApiException(400, "原密码错误");
         }
         if (request.newPassword().length() < 2) {
             throw new ApiException(400, "新密码长度不能少于 2 位");
         }
-        authMapper.updatePassword(user.id(), PasswordUtil.sha256(request.newPassword()));
+        authMapper.updatePassword(user.id(), PasswordUtil.hash(request.newPassword()));
         return Map.of("message", "密码已修改，请重新登录");
     }
 }

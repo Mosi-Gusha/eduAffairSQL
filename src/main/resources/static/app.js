@@ -191,14 +191,78 @@ function dateRange(start, end) {
   return `${start || '-'} 至 ${end || '-'}`;
 }
 
+function offeringTimes(row) {
+  if (Array.isArray(row?.times)) return row.times;
+  if (typeof row?.times === 'string' && row.times.trim()) {
+    try {
+      const parsed = JSON.parse(row.times);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      return [];
+    }
+  }
+  if (row?.dayOfWeek) {
+    return [{
+      dayOfWeek: row.dayOfWeek,
+      startSection: row.startSection,
+      endSection: row.endSection,
+      startWeek: row.startWeek || 1,
+      endWeek: row.endWeek || 16,
+      weekType: row.weekType || 'all'
+    }];
+  }
+  return [];
+}
+
 function courseTime(row) {
-  return `${text(dayNames[row.dayOfWeek])} ${text(row.startSection)}-${text(row.endSection)}节 · ${text(weekTypeText[row.weekType] || row.weekType || '全部')}`;
+  const times = offeringTimes(row);
+  if (!times.length) return '时间待定';
+  return times.map(timeText).join('；');
+}
+
+function timeText(time) {
+  const weekRange = `${text(time.startWeek || 1)}-${text(time.endWeek || 16)}周`;
+  const type = weekTypeText[time.weekType] || time.weekType || '全部';
+  return `${text(dayNames[time.dayOfWeek])} ${text(time.startSection)}-${text(time.endSection)}节 · ${weekRange} · ${text(type)}`;
 }
 
 function weekTypeOptions(selected = 'all') {
   return Object.entries(weekTypeText).map(([value, label]) => (
     `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`
   )).join('');
+}
+
+function dayOptions(selected = 1) {
+  return [1, 2, 3, 4, 5, 6, 7].map((day) => (
+    `<option value="${day}" ${Number(selected) === day ? 'selected' : ''}>${dayNames[day]}</option>`
+  )).join('');
+}
+
+function offeringTimesEditor(times = []) {
+  const rows = times.length ? times : [{ dayOfWeek: 1, startSection: 1, endSection: 2, startWeek: 1, endWeek: 16, weekType: 'all' }];
+  return `
+    <div class="field full offering-times-field">
+      <span>上课时间段</span>
+      <div class="offering-times" data-offering-times>
+        ${rows.map((time) => offeringTimeFields(time)).join('')}
+      </div>
+      <button class="btn" type="button" data-action="add-offering-time">添加时间段</button>
+    </div>
+  `;
+}
+
+function offeringTimeFields(time = {}) {
+  return `
+    <div class="time-segment" data-time-segment>
+      <label><span>星期</span><select name="timeDayOfWeek" required>${dayOptions(time.dayOfWeek || 1)}</select></label>
+      <label><span>开始节</span><input name="timeStartSection" type="number" min="1" max="12" value="${text(time.startSection || 1)}" required></label>
+      <label><span>结束节</span><input name="timeEndSection" type="number" min="1" max="12" value="${text(time.endSection || 2)}" required></label>
+      <label><span>起始周</span><input name="timeStartWeek" type="number" min="1" max="30" value="${text(time.startWeek || 1)}" required></label>
+      <label><span>结束周</span><input name="timeEndWeek" type="number" min="1" max="30" value="${text(time.endWeek || 16)}" required></label>
+      <label><span>单双周</span><select name="timeWeekType" required>${weekTypeOptions(time.weekType || 'all')}</select></label>
+      <button class="btn btn-danger" type="button" data-action="remove-offering-time">删除</button>
+    </div>
+  `;
 }
 
 function badge(status) {
@@ -249,6 +313,25 @@ function asNumberFields(data, fields) {
   fields.forEach((field) => {
     if (data[field] !== null && data[field] !== undefined) data[field] = Number(data[field]);
   });
+  return data;
+}
+
+function collectOfferingPayload(form) {
+  const raw = formObject(form);
+  const data = asNumberFields(raw, ['courseId', 'semesterId', 'teacherId', 'classroomId', 'capacity']);
+  data.usualRatio = raw.usualRatio != null ? Number(raw.usualRatio) / 100 : null;
+  data.examRatio = raw.examRatio != null ? Number(raw.examRatio) / 100 : null;
+  ['timeDayOfWeek', 'timeStartSection', 'timeEndSection', 'timeStartWeek', 'timeEndWeek', 'timeWeekType'].forEach((field) => {
+    delete data[field];
+  });
+  data.times = Array.from(form.querySelectorAll('[data-time-segment]')).map((segment) => ({
+    dayOfWeek: Number(segment.querySelector('[name="timeDayOfWeek"]').value),
+    startSection: Number(segment.querySelector('[name="timeStartSection"]').value),
+    endSection: Number(segment.querySelector('[name="timeEndSection"]').value),
+    startWeek: Number(segment.querySelector('[name="timeStartWeek"]').value),
+    endWeek: Number(segment.querySelector('[name="timeEndWeek"]').value),
+    weekType: segment.querySelector('[name="timeWeekType"]').value
+  }));
   return data;
 }
 
@@ -701,10 +784,7 @@ function renderOfferingModal() {
             <label class="field"><span>学期</span><input value="${text(currentSemester?.name || '未设置当前学期')}" disabled></label>
             <label class="field"><span>教师</span><select name="teacherId" required>${options(catalog.teachers, 'id', (item) => `${item.teacherNo} ${item.name}`)}</select></label>
             <label class="field"><span>教室</span><select name="classroomId" required>${options(catalog.classrooms, 'id', (item) => `${item.building}${item.roomNo}`)}</select></label>
-            <label class="field"><span>星期</span><select name="dayOfWeek">${[1,2,3,4,5,6,7].map((day) => `<option value="${day}">${dayNames[day]}</option>`).join('')}</select></label>
-            <label class="field"><span>开始节次</span><input name="startSection" type="number" min="1" max="12" required></label>
-            <label class="field"><span>结束节次</span><input name="endSection" type="number" min="1" max="12" required></label>
-            <label class="field"><span>周次</span><select name="weekType" required>${weekTypeOptions('all')}</select></label>
+            ${offeringTimesEditor()}
             <label class="field"><span>容量</span><input name="capacity" type="number" min="1" required></label>
             <label class="field"><span>平时比例(%)</span><input name="usualRatio" type="number" min="0" max="100" step="1" placeholder="40"></label>
             <label class="field"><span>考试比例(%)</span><input name="examRatio" type="number" min="0" max="100" step="1" placeholder="60"></label>
@@ -740,10 +820,7 @@ function renderEditOfferingModal(offeringId) {
             <label class="field"><span>学期</span><input value="${text(currentSemester?.name || '')}" disabled></label>
             <label class="field"><span>教师</span><select name="teacherId" required>${options(catalog.teachers, 'id', (item) => `${item.teacherNo} ${item.name}`, offering.teacherId)}</select></label>
             <label class="field"><span>教室</span><select name="classroomId" required>${options(catalog.classrooms, 'id', (item) => `${item.building}${item.roomNo}`, offering.classroomId)}</select></label>
-            <label class="field"><span>星期</span><select name="dayOfWeek">${[1,2,3,4,5,6,7].map((day) => `<option value="${day}" ${Number(offering.dayOfWeek) === day ? 'selected' : ''}>${dayNames[day]}</option>`).join('')}</select></label>
-            <label class="field"><span>开始节次</span><input name="startSection" type="number" min="1" max="12" value="${text(offering.startSection)}" required></label>
-            <label class="field"><span>结束节次</span><input name="endSection" type="number" min="1" max="12" value="${text(offering.endSection)}" required></label>
-            <label class="field"><span>周次</span><select name="weekType" required>${weekTypeOptions(offering.weekType || 'all')}</select></label>
+            ${offeringTimesEditor(offeringTimes(offering))}
             <label class="field"><span>容量</span><input name="capacity" type="number" min="1" value="${text(offering.capacity)}" required></label>
             <label class="field"><span>平时比例(%)</span><input name="usualRatio" type="number" min="0" max="100" step="1" value="${usualPct}" placeholder="40"></label>
             <label class="field"><span>考试比例(%)</span><input name="examRatio" type="number" min="0" max="100" step="1" value="${examPct}" placeholder="60"></label>
@@ -1185,12 +1262,13 @@ function renderSchedule() {
 
 function scheduleGrid(rows) {
   const slots = [[1,2], [3,4], [5,6], [7,8], [9,10]];
+  const entries = rows.flatMap((row) => offeringTimes(row).map((time) => ({ ...row, ...time })));
   const cells = ['<div class="schedule-head">节次</div>', ...dayNames.slice(1).map((day) => `<div class="schedule-head">${day}</div>`)];
   slots.forEach(([start, end]) => {
     cells.push(`<div class="schedule-slot">${start}-${end}节</div>`);
     for (let day = 1; day <= 7; day += 1) {
-      const courses = rows.filter((row) => Number(row.dayOfWeek) === day && Number(row.startSection) <= start && Number(row.endSection) >= end);
-      cells.push(courses.length ? `<div class="schedule-course">${courses.map((course) => `<strong>${text(course.courseName)}</strong>${text(weekTypeText[course.weekType] || '全部')} · ${text(course.teacherName)}<br>${text(course.classroom)}`).join('<hr>')}</div>` : '<div></div>');
+      const courses = entries.filter((row) => Number(row.dayOfWeek) === day && Number(row.startSection) <= start && Number(row.endSection) >= end);
+      cells.push(courses.length ? `<div class="schedule-course">${courses.map((course) => `<strong>${text(course.courseName)}</strong>${text(course.startWeek || 1)}-${text(course.endWeek || 16)}周 · ${text(weekTypeText[course.weekType] || '全部')} · ${text(course.teacherName)}<br>${text(course.classroom)}`).join('<hr>')}</div>` : '<div></div>');
     }
   });
   return `<div class="schedule"><div class="schedule-grid">${cells.join('')}</div></div>`;
@@ -1410,6 +1488,16 @@ document.addEventListener('click', async (event) => {
     } else if (action === 'edit-offering') {
       state.modal = renderEditOfferingModal(target.dataset.id);
       renderShell();
+    } else if (action === 'add-offering-time') {
+      const list = target.closest('form')?.querySelector('[data-offering-times]');
+      if (list) list.insertAdjacentHTML('beforeend', offeringTimeFields());
+    } else if (action === 'remove-offering-time') {
+      const list = target.closest('[data-offering-times]');
+      if (list && list.querySelectorAll('[data-time-segment]').length > 1) {
+        target.closest('[data-time-segment]')?.remove();
+      } else {
+        toast('至少保留一个上课时间段', 'error');
+      }
     } else if (action === 'offering-page') {
       state.offeringPage = Number(target.dataset.page);
       renderShell();
@@ -1540,19 +1628,13 @@ document.addEventListener('submit', async (event) => {
       state.modal = '';
       await refresh('课程已添加');
     } else if (name === 'create-offering-modal') {
-      const raw = formObject(form);
-      const data = asNumberFields(raw, ['courseId', 'semesterId', 'teacherId', 'classroomId', 'dayOfWeek', 'startSection', 'endSection', 'capacity']);
-      data.usualRatio = raw.usualRatio != null ? Number(raw.usualRatio) / 100 : null;
-      data.examRatio = raw.examRatio != null ? Number(raw.examRatio) / 100 : null;
+      const data = collectOfferingPayload(form);
       await api('/api/admin/offerings', { method: 'POST', body: JSON.stringify(data) });
       state.modal = '';
       await refresh('课程班已添加');
     } else if (name === 'edit-offering-modal') {
       const offeringId = form.dataset.offeringId;
-      const raw = formObject(form);
-      const data = asNumberFields(raw, ['courseId', 'semesterId', 'teacherId', 'classroomId', 'dayOfWeek', 'startSection', 'endSection', 'capacity']);
-      data.usualRatio = raw.usualRatio != null ? Number(raw.usualRatio) / 100 : null;
-      data.examRatio = raw.examRatio != null ? Number(raw.examRatio) / 100 : null;
+      const data = collectOfferingPayload(form);
       await api(`/api/admin/offerings/${offeringId}`, { method: 'PUT', body: JSON.stringify(data) });
       state.modal = '';
       await refresh('课程班已更新');

@@ -1076,6 +1076,38 @@ textarea:focus-visible,
   gap: 8px;
 }
 
+.offering-times-field {
+  display: grid;
+  gap: 10px;
+}
+
+.offering-times {
+  display: grid;
+  gap: 10px;
+}
+
+.time-segment {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(72px, 1fr)) auto;
+  gap: 8px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.time-segment label {
+  display: grid;
+  gap: 6px;
+}
+
+.time-segment label span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -2315,7 +2347,8 @@ button.campus-card {
   .teacher-counts,
   .form-grid,
   .filter-grid,
-  .filter-grid.compact {
+  .filter-grid.compact,
+  .time-segment {
     grid-template-columns: 1fr;
   }
 

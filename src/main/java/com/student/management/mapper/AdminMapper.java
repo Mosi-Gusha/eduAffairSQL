@@ -83,8 +83,8 @@ public interface AdminMapper {
     @Update("UPDATE users SET email = #{email} WHERE id = #{userId}")
     int updateUserEmail(@Param("userId") Long userId, @Param("email") String email);
 
-    @Update("UPDATE users SET password_hash = SHA2(username, 256), status = 'enabled' WHERE id = #{userId}")
-    int resetPassword(@Param("userId") Long userId);
+    @Update("UPDATE users SET password_hash = #{passwordHash}, status = 'enabled' WHERE id = #{userId}")
+    int resetPassword(@Param("userId") Long userId, @Param("passwordHash") String passwordHash);
 
     @Select("""
             SELECT id, name, start_date AS startDate, end_date AS endDate,
@@ -297,8 +297,7 @@ public interface AdminMapper {
 
     @Select("""
             <script>
-            SELECT co.id, co.day_of_week AS dayOfWeek, co.start_section AS startSection,
-                   co.end_section AS endSection, co.week_type AS weekType, co.capacity, co.selected_count AS selectedCount,
+            SELECT co.id, co.capacity, co.selected_count AS selectedCount,
                    co.status, co.usual_ratio AS usualRatio, co.exam_ratio AS examRatio,
                    c.id AS courseId, c.code AS courseCode, c.name AS courseName, c.credit,
                    d.name AS departmentName,
@@ -324,19 +323,35 @@ public interface AdminMapper {
              <if test="currentOnly">
                AND s.is_current = 1
              </if>
-             ORDER BY s.start_date DESC, co.day_of_week, co.start_section
+             ORDER BY s.start_date DESC, co.id
             </script>
             """)
     List<Map<String, Object>> listOfferings(@Param("keyword") String keyword, @Param("currentOnly") boolean currentOnly);
 
     @Insert("""
-            INSERT INTO course_offerings(course_id, semester_id, teacher_id, classroom_id, day_of_week,
-                                         start_section, end_section, week_type, capacity, status, usual_ratio, exam_ratio)
-            VALUES(#{courseId}, #{semesterId}, #{teacherId}, #{classroomId}, #{dayOfWeek},
-                   #{startSection}, #{endSection}, #{weekType}, #{capacity}, 'selecting',
+            INSERT INTO course_offerings(course_id, semester_id, teacher_id, classroom_id,
+                                         capacity, status, usual_ratio, exam_ratio)
+            VALUES(#{courseId}, #{semesterId}, #{teacherId}, #{classroomId}, #{capacity}, 'selecting',
                    COALESCE(#{usualRatio}, 0.4), COALESCE(#{examRatio}, 0.6))
             """)
     int insertOffering(CreateOfferingRequest request);
+
+    @Select("SELECT LAST_INSERT_ID()")
+    Long lastInsertId();
+
+    @Insert("""
+            <script>
+            INSERT INTO course_offering_times(offering_id, day_of_week, start_section, end_section,
+                                              start_week, end_week, week_type)
+            VALUES
+            <foreach collection="times" item="time" separator=",">
+              (#{offeringId}, #{time.dayOfWeek}, #{time.startSection}, #{time.endSection},
+               #{time.startWeek}, #{time.endWeek}, #{time.weekType})
+            </foreach>
+            </script>
+            """)
+    int insertOfferingTimes(@Param("offeringId") Long offeringId,
+                            @Param("times") List<CreateOfferingRequest.OfferingTimeRequest> times);
 
     @Update("""
             UPDATE course_offerings
@@ -344,10 +359,6 @@ public interface AdminMapper {
                    semester_id = #{request.semesterId},
                    teacher_id = #{request.teacherId},
                    classroom_id = #{request.classroomId},
-                   day_of_week = #{request.dayOfWeek},
-                   start_section = #{request.startSection},
-                   end_section = #{request.endSection},
-                   week_type = #{request.weekType},
                    capacity = #{request.capacity},
                    status = #{request.status},
                    usual_ratio = COALESCE(#{request.usualRatio}, 0.4),
@@ -355,6 +366,9 @@ public interface AdminMapper {
              WHERE id = #{offeringId}
             """)
     int updateOffering(@Param("offeringId") Long offeringId, @Param("request") CreateOfferingRequest request);
+
+    @org.apache.ibatis.annotations.Delete("DELETE FROM course_offering_times WHERE offering_id = #{offeringId}")
+    int deleteOfferingTimes(@Param("offeringId") Long offeringId);
 
     @Update("UPDATE course_offerings SET status = 'closed' WHERE id = #{offeringId}")
     int closeOffering(@Param("offeringId") Long offeringId);
@@ -432,7 +446,6 @@ public interface AdminMapper {
     @Select("""
             SELECT e.id AS enrollmentId, co.id AS offeringId, c.code AS courseCode, c.name AS courseName,
                    c.credit, sem.name AS semesterName, u.display_name AS teacherName,
-                   co.day_of_week AS dayOfWeek, co.start_section AS startSection, co.end_section AS endSection,
                    CONCAT(cr.building, cr.room_no) AS classroom, e.status
               FROM enrollments e
               JOIN course_offerings co ON co.id = e.offering_id
@@ -496,8 +509,6 @@ public interface AdminMapper {
 
     @Select("""
             SELECT co.id, c.code AS courseCode, c.name AS courseName,
-                   co.day_of_week AS dayOfWeek, co.start_section AS startSection,
-                   co.end_section AS endSection, co.week_type AS weekType,
                    CONCAT(cr.building, cr.room_no) AS classroom,
                    co.capacity, co.selected_count AS selectedCount,
                    co.usual_ratio AS usualRatio, co.exam_ratio AS examRatio
@@ -506,14 +517,12 @@ public interface AdminMapper {
               JOIN classrooms cr ON cr.id = co.classroom_id
               JOIN semesters s ON s.id = co.semester_id
              WHERE co.teacher_id = #{teacherId} AND s.is_current = 1 AND co.status = 'selecting'
-             ORDER BY co.day_of_week, co.start_section
+             ORDER BY co.id
             """)
     List<Map<String, Object>> teacherCurrentOfferings(@Param("teacherId") Long teacherId);
 
     @Select("""
-            SELECT c.code AS courseCode, c.name AS courseName,
-                   co.day_of_week AS dayOfWeek, co.start_section AS startSection,
-                   co.end_section AS endSection, co.week_type AS weekType,
+            SELECT co.id AS offeringId, c.code AS courseCode, c.name AS courseName,
                    CONCAT(cr.building, cr.room_no) AS classroom,
                    co.capacity, co.selected_count AS selectedCount,
                    co.usual_ratio AS usualRatio, co.exam_ratio AS examRatio,
@@ -526,7 +535,7 @@ public interface AdminMapper {
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
              WHERE e.student_id = #{studentId} AND e.status = 'selected' AND s.is_current = 1
-             ORDER BY co.day_of_week, co.start_section
+             ORDER BY co.id
             """)
     List<Map<String, Object>> studentCurrentEnrollments(@Param("studentId") Long studentId);
 }

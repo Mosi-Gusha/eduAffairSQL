@@ -49,13 +49,13 @@ public class TeacherService {
     public List<Map<String, Object>> courses(SessionUser user) {
         Long teacherId = teacherId(user);
         return cache.get("teacher:" + teacherId + ":courses", LIST_TYPE,
-                () -> teacherMapper.courses(teacherId));
+                () -> withOfferingTimes(teacherMapper.courses(teacherId), "id"));
     }
 
     public List<Map<String, Object>> gradeCourses(SessionUser user) {
         Long teacherId = teacherId(user);
         return cache.get("teacher:" + teacherId + ":grade-courses", LIST_TYPE,
-                () -> teacherMapper.gradeCourses(teacherId));
+                () -> withOfferingTimes(teacherMapper.gradeCourses(teacherId), "id"));
     }
 
     public List<Map<String, Object>> roster(SessionUser user, Long offeringId) {
@@ -106,6 +106,12 @@ public class TeacherService {
 
     private void clearTeachingCaches() {
         cache.evictByPrefix("admin:", "student:", "teacher:");
+    }
+
+    private List<Map<String, Object>> withOfferingTimes(List<Map<String, Object>> rows, String idKey) {
+        List<Long> offeringIds = AdminService.offeringIds(rows, idKey);
+        List<Map<String, Object>> times = offeringIds.isEmpty() ? List.of() : commonMapper.offeringTimes(offeringIds);
+        return AdminService.attachOfferingTimes(rows, times, idKey);
     }
 
 }
