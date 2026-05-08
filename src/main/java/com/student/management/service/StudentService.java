@@ -50,7 +50,7 @@ public class StudentService {
         return cache.get("student:" + studentId + ":offerings:" + cache.keyPart(keyword), MAP_TYPE, () -> {
             Map<String, Object> semester = commonMapper.currentSemester();
             if (semester == null) {
-                throw new ApiException(500, "未设置当前学期");
+                throw new ApiException(500, "暂无可用学期");
             }
             Long semesterId = MapUtil.longValue(semester, "id");
             return AdminService.mapOf(

@@ -575,16 +575,15 @@ function renderSemesterAdmin() {
   const catalog = state.adminCatalog || {};
   const semesters = catalog.semesters || [];
   const current = catalog.currentSemester;
-  const active = semesters.find((item) => item.isCurrent);
   return `
     <div class="page-grid">
       <section class="panel">
         <div class="panel-header">
-          <div><h2>学期管理</h2><p>新建学期后配置课程；学期持续期间学生均可选课；教师可为任意学期登分。</p></div>
+          <div><h2>学期管理</h2><p>当前学期由系统日期自动判断：优先使用进行中的学期，假期中使用最近将开学的学期。</p></div>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th class="col-term">学期</th><th class="col-date">日期</th><th class="col-credit">最大学分</th><th class="col-status">状态</th><th class="col-current">当前</th><th class="col-actions">操作</th></tr></thead>
+            <thead><tr><th class="col-term">学期</th><th class="col-date">日期</th><th class="col-credit">最大学分</th><th class="col-status">状态</th><th class="col-current">当前</th></tr></thead>
             <tbody>
               ${semesters.map((term) => `
                 <tr>
@@ -593,7 +592,6 @@ function renderSemesterAdmin() {
                   <td>${creditNumber(term.maxCredit)} 学分</td>
                   <td>${badge(term.status)}</td>
                   <td>${bool(term.isCurrent) ? '是' : '否'}</td>
-                  <td><div class="row-actions">${semesterActions(term)}</div></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -602,7 +600,7 @@ function renderSemesterAdmin() {
       </section>
       <section class="grid-2">
         <div class="panel">
-          <div class="panel-header"><div><h2>新建学期</h2><p>将创建新的当前学期，新学期期间学生均可选课。</p></div></div>
+          <div class="panel-header"><div><h2>新建学期</h2><p>保存学期基础信息；是否为当前学期会按系统日期自动计算。</p></div></div>
           <form class="form-grid" data-form="create-semester">
             ${semesterFields({}, false)}
             <div class="form-actions"><button class="btn btn-primary" type="submit">新建学期</button></div>
@@ -630,12 +628,6 @@ function semesterFields(term, disabled) {
     <label class="field"><span>学期结束</span><input name="endDate" type="date" value="${text(term.endDate || '')}" required ${attr}></label>
     <label class="field"><span>最大学分</span><input name="maxCredit" type="number" min="1" step="0.5" value="${text(term.maxCredit ?? 30)}" required ${attr}></label>
   `;
-}
-
-function semesterActions(term) {
-  if (bool(term.isCurrent)) return '<span class="small muted">当前学期</span>';
-  if (term.status === 'archived') return '<span class="small muted">已归档</span>';
-  return `<button class="btn btn-primary" data-action="semester-set-current" data-id="${term.id}">设为当前</button>`;
 }
 
 function renderCourseCatalog() {
@@ -789,7 +781,7 @@ function renderOfferingModal() {
           <form class="form-grid" data-form="create-offering-modal">
             <label class="field"><span>课程</span><select name="courseId" required>${options(availableCourses, 'id', (item) => `${item.code} ${item.name}`)}</select></label>
             <input type="hidden" name="semesterId" value="${text(currentSemester?.id || '')}">
-            <label class="field"><span>学期</span><input value="${text(currentSemester?.name || '未设置当前学期')}" disabled></label>
+            <label class="field"><span>学期</span><input value="${text(currentSemester?.name || '暂无可用学期')}" disabled></label>
             <label class="field"><span>教师</span><select name="teacherId" required>${options(catalog.teachers, 'id', (item) => `${item.teacherNo} ${item.name}`)}</select></label>
             <label class="field"><span>教室</span><select name="classroomId" required>${options(catalog.classrooms, 'id', (item) => `${item.building}${item.roomNo}`)}</select></label>
             ${offeringTimesEditor()}
@@ -1461,9 +1453,6 @@ document.addEventListener('click', async (event) => {
       if (!confirm('确定要删除这条通知吗？')) return;
       await api(`/api/admin/notices/${target.dataset.id}`, { method: 'DELETE' });
       await refresh('通知已删除');
-    } else if (action === 'semester-set-current') {
-      await api(`/api/admin/semesters/${target.dataset.id}/current`, { method: 'POST' });
-      await refresh('已设为当前学期');
     } else if (action === 'course-disable') {
       if (!confirm('确定要弃用该课程吗？弃用后不能再新建该课程的课程班，历史课程班不受影响。')) return;
       await api(`/api/admin/courses/${target.dataset.id}/disable`, { method: 'POST' });

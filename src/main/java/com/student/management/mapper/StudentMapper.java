@@ -12,6 +12,8 @@ import org.apache.ibatis.mapping.StatementType;
 
 @Mapper
 public interface StudentMapper {
+    String CURRENT_SEMESTER_ID_SQL = CommonMapper.CURRENT_SEMESTER_ID_SQL;
+
     @Select("""
             <script>
             SELECT co.id, c.code AS courseCode, c.name AS courseName, c.credit,
@@ -78,8 +80,11 @@ public interface StudentMapper {
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
               JOIN classrooms cr ON cr.id = co.classroom_id
-              JOIN semesters s ON s.id = co.semester_id AND s.is_current = 1
-             WHERE e.student_id = #{studentId} AND e.status = 'selected'
+              JOIN semesters s ON s.id = co.semester_id
+             WHERE s.id = (
+            """ + CURRENT_SEMESTER_ID_SQL + """
+                   )
+               AND e.student_id = #{studentId} AND e.status = 'selected'
              ORDER BY co.id
             """)
     List<Map<String, Object>> schedule(@Param("studentId") Long studentId);
@@ -126,7 +131,9 @@ public interface StudentMapper {
               FROM enrollments e
               JOIN course_offerings co ON co.id = e.offering_id
               JOIN courses c ON c.id = co.course_id
-              LEFT JOIN (SELECT id FROM semesters WHERE is_current = 1 LIMIT 1) current_semester ON 1 = 1
+              LEFT JOIN (
+            """ + CURRENT_SEMESTER_ID_SQL + """
+              ) current_semester ON 1 = 1
               LEFT JOIN grades g ON g.enrollment_id = e.id
              WHERE e.student_id = #{studentId} AND e.status = 'selected'
             """)

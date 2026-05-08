@@ -80,7 +80,6 @@ CREATE TABLE semesters (
   start_date DATE NOT NULL,
   end_date DATE NOT NULL,
   max_credit DECIMAL(5,1) NOT NULL DEFAULT 30.0,
-  is_current TINYINT(1) NOT NULL DEFAULT 0,
   CHECK (max_credit > 0)
 ) ENGINE=InnoDB;
 
@@ -273,8 +272,8 @@ BEGIN
   DECLARE v_capacity SMALLINT;
   DECLARE v_selected SMALLINT;
   DECLARE v_status VARCHAR(16);
-  DECLARE v_is_current TINYINT;
   DECLARE v_semester BIGINT;
+  DECLARE v_current_semester BIGINT;
   DECLARE v_course BIGINT;
   DECLARE v_credit DECIMAL(3,1);
   DECLARE v_max_credit DECIMAL(5,1);
@@ -285,10 +284,25 @@ BEGIN
   DECLARE v_sem_start DATE;
   DECLARE v_sem_end DATE;
 
+  SELECT id
+    INTO v_current_semester
+    FROM semesters
+   ORDER BY
+         CASE
+           WHEN CURDATE() BETWEEN start_date AND end_date THEN 0
+           WHEN start_date > CURDATE() THEN 1
+           ELSE 2
+         END,
+         CASE WHEN start_date > CURDATE() THEN start_date END ASC,
+         CASE WHEN CURDATE() BETWEEN start_date AND end_date THEN start_date END DESC,
+         CASE WHEN CURDATE() > end_date THEN end_date END DESC,
+         id DESC
+   LIMIT 1;
+
   SELECT co.capacity, co.selected_count, co.status, co.semester_id, co.course_id,
-         c.credit, s.is_current, s.start_date, s.end_date, s.max_credit
+         c.credit, s.start_date, s.end_date, s.max_credit
     INTO v_capacity, v_selected, v_status, v_semester, v_course,
-         v_credit, v_is_current, v_sem_start, v_sem_end, v_max_credit
+         v_credit, v_sem_start, v_sem_end, v_max_credit
     FROM course_offerings co
     JOIN courses c ON c.id = co.course_id
     JOIN semesters s ON s.id = co.semester_id
@@ -341,8 +355,8 @@ BEGIN
           OR selected_time.week_type = 'all'
           OR existing_time.week_type = selected_time.week_type);
 
-  IF v_is_current <> 1 THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '当前学期未设置';
+  IF v_semester <> v_current_semester THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '只能选择当前学期课程';
   ELSEIF CURDATE() < v_sem_start OR CURDATE() > v_sem_end THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '当前日期不在学期起止日期内，不能选课';
   ELSEIF v_status <> 'selecting' THEN
@@ -464,10 +478,11 @@ INSERT INTO students(id, user_id, student_no, major_id, admission_year) VALUES
 (19, 30, 's19', 5, 2023),
 (20, 31, 's20', 6, 2024);
 
-INSERT INTO semesters(id, name, start_date, end_date, max_credit, is_current) VALUES
-(1, '2025-2026 学年第二学期', '2026-02-23', '2026-07-05', 30.0, 1),
-(2, '2025-2026 学年第一学期', '2025-09-01', '2026-01-10', 30.0, 0),
-(3, '2024-2025 学年第二学期', '2025-02-24', '2025-07-06', 30.0, 0);
+INSERT INTO semesters(id, name, start_date, end_date, max_credit) VALUES
+(1, '2025-2026 学年第二学期', '2026-03-02', '2026-07-05', 36.0),
+(2, '2025-2026 学年第一学期', '2025-09-01', '2026-01-04', 38.0),
+(3, '2024-2025 学年第二学期', '2025-02-10', '2025-06-15', 40.0),
+(4, '2026-2027 学年第一学期', '2026-08-31', '2027-01-03', 40.0);
 
 INSERT INTO courses(id, code, name, department_id, credit, status) VALUES
 (1, 'C001', '数据结构', 1, 3.0, 'enabled'),

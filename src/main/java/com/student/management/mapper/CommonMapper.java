@@ -9,6 +9,22 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface CommonMapper {
+    String CURRENT_SEMESTER_ID_SQL = """
+            SELECT id
+              FROM semesters
+             ORDER BY
+                   CASE
+                     WHEN CURDATE() BETWEEN start_date AND end_date THEN 0
+                     WHEN start_date > CURDATE() THEN 1
+                     ELSE 2
+                   END,
+                   CASE WHEN start_date > CURDATE() THEN start_date END ASC,
+                   CASE WHEN CURDATE() BETWEEN start_date AND end_date THEN start_date END DESC,
+                   CASE WHEN CURDATE() > end_date THEN end_date END DESC,
+                   id DESC
+             LIMIT 1
+            """;
+
     @Select("""
             SELECT id, title, content, audience, created_at AS createdAt
               FROM notices
@@ -27,16 +43,19 @@ public interface CommonMapper {
     List<Map<String, Object>> listNotices(@Param("role") String role);
 
     @Select("""
-            SELECT id, name, start_date AS startDate, end_date AS endDate,
-                   max_credit AS maxCredit,
+            WITH current_semester AS (
+            """ + CURRENT_SEMESTER_ID_SQL + """
+            )
+            SELECT s.id, s.name, s.start_date AS startDate, s.end_date AS endDate,
+                   s.max_credit AS maxCredit,
                    CASE
-                     WHEN CURDATE() < start_date THEN 'not_started'
-                     WHEN CURDATE() BETWEEN start_date AND end_date THEN 'active'
+                     WHEN s.start_date > CURDATE() THEN 'not_started'
+                     WHEN CURDATE() BETWEEN s.start_date AND s.end_date THEN 'active'
                      ELSE 'archived'
                    END AS status,
-                   is_current AS isCurrent
-              FROM semesters
-             ORDER BY start_date DESC
+                   s.id = (SELECT id FROM current_semester) AS isCurrent
+              FROM semesters s
+             ORDER BY s.start_date DESC
             """)
     List<Map<String, Object>> semesters();
 
@@ -44,14 +63,23 @@ public interface CommonMapper {
             SELECT id, name, start_date AS startDate, end_date AS endDate,
                    max_credit AS maxCredit,
                    CASE
-                     WHEN CURDATE() < start_date THEN 'not_started'
+                     WHEN start_date > CURDATE() THEN 'not_started'
                      WHEN CURDATE() BETWEEN start_date AND end_date THEN 'active'
                      ELSE 'archived'
                    END AS status,
-                   is_current AS isCurrent
+                   1 AS isCurrent
               FROM semesters
-             WHERE is_current = 1
-            LIMIT 1
+             ORDER BY
+                   CASE
+                     WHEN CURDATE() BETWEEN start_date AND end_date THEN 0
+                     WHEN start_date > CURDATE() THEN 1
+                     ELSE 2
+                   END,
+                   CASE WHEN start_date > CURDATE() THEN start_date END ASC,
+                   CASE WHEN CURDATE() BETWEEN start_date AND end_date THEN start_date END DESC,
+                   CASE WHEN CURDATE() > end_date THEN end_date END DESC,
+                   id DESC
+             LIMIT 1
             """)
     Map<String, Object> currentSemester();
 

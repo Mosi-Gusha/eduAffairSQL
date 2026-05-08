@@ -149,11 +149,6 @@ public class AdminController {
         return ApiResponse.ok(adminService.deleteOffering(offeringId));
     }
 
-    @PostMapping("/semesters/{semesterId}/current")
-    public ApiResponse<Map<String, Object>> setCurrentSemester(@PathVariable Long semesterId) {
-        return ApiResponse.ok(adminService.setCurrentSemester(semesterId));
-    }
-
     @PostMapping("/semesters")
     public ApiResponse<Map<String, Object>> createSemester(@Valid @RequestBody SemesterRequest request) {
         return ApiResponse.ok(adminService.createSemester(request));

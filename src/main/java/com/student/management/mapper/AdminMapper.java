@@ -19,6 +19,8 @@ import org.apache.ibatis.mapping.StatementType;
 
 @Mapper
 public interface AdminMapper {
+    String CURRENT_SEMESTER_ID_SQL = CommonMapper.CURRENT_SEMESTER_ID_SQL;
+
     @Select("SELECT COUNT(*) FROM users")
     long countUsers();
 
@@ -81,39 +83,25 @@ public interface AdminMapper {
     int updateUserEmail(@Param("userId") Long userId, @Param("email") String email);
 
     @Select("""
-            SELECT id, name, start_date AS startDate, end_date AS endDate,
-                   max_credit AS maxCredit,
+            WITH current_semester AS (
+            """ + CURRENT_SEMESTER_ID_SQL + """
+            )
+            SELECT s.id, s.name, s.start_date AS startDate, s.end_date AS endDate,
+                   s.max_credit AS maxCredit,
                    CASE
-                     WHEN CURDATE() < start_date THEN 'not_started'
-                     WHEN CURDATE() BETWEEN start_date AND end_date THEN 'active'
+                     WHEN s.start_date > CURDATE() THEN 'not_started'
+                     WHEN CURDATE() BETWEEN s.start_date AND s.end_date THEN 'active'
                      ELSE 'archived'
                    END AS status,
-                   is_current AS isCurrent
-              FROM semesters
-             ORDER BY start_date DESC
+                   s.id = (SELECT id FROM current_semester) AS isCurrent
+              FROM semesters s
+             ORDER BY s.start_date DESC
             """)
     List<Map<String, Object>> semesters();
 
-    @Select("SELECT COUNT(*) FROM semesters WHERE is_current = 1 AND CURDATE() <= end_date")
-    int activeSemesterCount();
-
-    @Select("""
-            SELECT id, name, start_date AS startDate, end_date AS endDate,
-                   max_credit AS maxCredit,
-                   CASE
-                     WHEN CURDATE() < start_date THEN 'not_started'
-                     WHEN CURDATE() BETWEEN start_date AND end_date THEN 'active'
-                     ELSE 'archived'
-                   END AS status,
-                   is_current AS isCurrent
-              FROM semesters
-             WHERE id = #{semesterId}
-            """)
-    Map<String, Object> semesterById(@Param("semesterId") Long semesterId);
-
     @Insert("""
-            INSERT INTO semesters(name, start_date, end_date, max_credit, is_current)
-            VALUES(#{name}, #{startDate}, #{endDate}, #{maxCredit}, 1)
+            INSERT INTO semesters(name, start_date, end_date, max_credit)
+            VALUES(#{name}, #{startDate}, #{endDate}, #{maxCredit})
             """)
     int insertSemester(SemesterRequest request);
 
@@ -126,12 +114,6 @@ public interface AdminMapper {
              WHERE id = #{semesterId}
             """)
     int updateSemester(@Param("semesterId") Long semesterId, @Param("request") SemesterRequest request);
-
-    @Update("UPDATE semesters SET is_current = 0")
-    int clearCurrentSemester();
-
-    @Update("UPDATE semesters SET is_current = 1 WHERE id = #{semesterId}")
-    int setCurrentSemester(@Param("semesterId") Long semesterId);
 
     @Select("SELECT id, name, phone FROM departments ORDER BY id")
     List<Map<String, Object>> departments();
@@ -315,7 +297,9 @@ public interface AdminMapper {
                     OR CONCAT(cr.building, cr.room_no) LIKE CONCAT('%', #{keyword}, '%'))
              </if>
              <if test="currentOnly">
-               AND s.is_current = 1
+               AND s.id = (
+            """ + CURRENT_SEMESTER_ID_SQL + """
+               )
              </if>
              ORDER BY s.start_date DESC, co.id
             </script>
@@ -389,7 +373,10 @@ public interface AdminMapper {
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
               JOIN semesters s ON s.id = co.semester_id
-             WHERE s.is_current = 1 AND co.status = 'selecting'
+             WHERE s.id = (
+            """ + CURRENT_SEMESTER_ID_SQL + """
+                   )
+               AND co.status = 'selecting'
              ORDER BY fillRate DESC, co.id
             """)
     List<Map<String, Object>> enrollmentReport();
@@ -510,7 +497,11 @@ public interface AdminMapper {
               JOIN courses c ON c.id = co.course_id
               JOIN classrooms cr ON cr.id = co.classroom_id
               JOIN semesters s ON s.id = co.semester_id
-             WHERE co.teacher_id = #{teacherId} AND s.is_current = 1 AND co.status = 'selecting'
+             WHERE co.teacher_id = #{teacherId}
+               AND s.id = (
+            """ + CURRENT_SEMESTER_ID_SQL + """
+                   )
+               AND co.status = 'selecting'
              ORDER BY co.id
             """)
     List<Map<String, Object>> teacherCurrentOfferings(@Param("teacherId") Long teacherId);
@@ -528,7 +519,11 @@ public interface AdminMapper {
               JOIN semesters s ON s.id = co.semester_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
-             WHERE e.student_id = #{studentId} AND e.status = 'selected' AND s.is_current = 1
+             WHERE e.student_id = #{studentId}
+               AND e.status = 'selected'
+               AND s.id = (
+            """ + CURRENT_SEMESTER_ID_SQL + """
+                   )
              ORDER BY co.id
             """)
     List<Map<String, Object>> studentCurrentEnrollments(@Param("studentId") Long studentId);

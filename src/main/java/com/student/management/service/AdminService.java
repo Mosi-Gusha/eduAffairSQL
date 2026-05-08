@@ -287,20 +287,7 @@ public class AdminService {
     }
 
     @Transactional
-    public Map<String, Object> setCurrentSemester(Long semesterId) {
-        Map<String, Object> semester = adminMapper.semesterById(semesterId);
-        if (semester == null) {
-            throw new ApiException(404, "学期不存在");
-        }
-        adminMapper.clearCurrentSemester();
-        adminMapper.setCurrentSemester(semesterId);
-        clearTeachingCaches();
-        return message("当前学期已切换");
-    }
-
-    @Transactional
     public Map<String, Object> createSemester(SemesterRequest request) {
-        adminMapper.clearCurrentSemester();
         adminMapper.insertSemester(request);
         clearTeachingCaches();
         return message("学期已新建，可开始维护该学期课程");
