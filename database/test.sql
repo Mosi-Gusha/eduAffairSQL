@@ -270,6 +270,83 @@ BEGIN
   IF NEW.capacity < v_selected THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'course offering capacity is lower than selected enrollments';
   END IF;
+  IF EXISTS (
+    SELECT 1
+      FROM course_offering_times check_time
+      JOIN course_offering_times existing_time ON existing_time.offering_id <> OLD.id
+      JOIN course_offerings existing_offering ON existing_offering.id = existing_time.offering_id
+     WHERE check_time.offering_id = OLD.id
+       AND existing_offering.semester_id = NEW.semester_id
+       AND (existing_offering.teacher_id = NEW.teacher_id
+            OR existing_offering.classroom_id = NEW.classroom_id)
+       AND existing_time.day_of_week = check_time.day_of_week
+       AND NOT (existing_time.end_section < check_time.start_section
+                OR existing_time.start_section > check_time.end_section)
+       AND NOT (existing_time.end_week < check_time.start_week
+                OR existing_time.start_week > check_time.end_week)
+       AND (existing_time.week_type = 'all'
+            OR check_time.week_type = 'all'
+            OR existing_time.week_type = check_time.week_type)
+     LIMIT 1
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'teacher or classroom schedule conflict';
+  END IF;
+END$$
+
+CREATE TRIGGER trg_offering_times_schedule_after_insert
+AFTER INSERT ON course_offering_times
+FOR EACH ROW
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM course_offering_times existing_time
+      JOIN course_offerings existing_offering ON existing_offering.id = existing_time.offering_id
+      JOIN course_offerings current_offering ON current_offering.id = NEW.offering_id
+     WHERE existing_time.id <> NEW.id
+       AND (existing_time.offering_id = NEW.offering_id
+            OR (existing_offering.semester_id = current_offering.semester_id
+                AND (existing_offering.teacher_id = current_offering.teacher_id
+                     OR existing_offering.classroom_id = current_offering.classroom_id)))
+       AND existing_time.day_of_week = NEW.day_of_week
+       AND NOT (existing_time.end_section < NEW.start_section
+                OR existing_time.start_section > NEW.end_section)
+       AND NOT (existing_time.end_week < NEW.start_week
+                OR existing_time.start_week > NEW.end_week)
+       AND (existing_time.week_type = 'all'
+            OR NEW.week_type = 'all'
+            OR existing_time.week_type = NEW.week_type)
+     LIMIT 1
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'course offering time conflict';
+  END IF;
+END$$
+
+CREATE TRIGGER trg_offering_times_schedule_after_update
+AFTER UPDATE ON course_offering_times
+FOR EACH ROW
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM course_offering_times existing_time
+      JOIN course_offerings existing_offering ON existing_offering.id = existing_time.offering_id
+      JOIN course_offerings current_offering ON current_offering.id = NEW.offering_id
+     WHERE existing_time.id <> NEW.id
+       AND (existing_time.offering_id = NEW.offering_id
+            OR (existing_offering.semester_id = current_offering.semester_id
+                AND (existing_offering.teacher_id = current_offering.teacher_id
+                     OR existing_offering.classroom_id = current_offering.classroom_id)))
+       AND existing_time.day_of_week = NEW.day_of_week
+       AND NOT (existing_time.end_section < NEW.start_section
+                OR existing_time.start_section > NEW.end_section)
+       AND NOT (existing_time.end_week < NEW.start_week
+                OR existing_time.start_week > NEW.end_week)
+       AND (existing_time.week_type = 'all'
+            OR NEW.week_type = 'all'
+            OR existing_time.week_type = NEW.week_type)
+     LIMIT 1
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'course offering time conflict';
+  END IF;
 END$$
 
 CREATE VIEW course_offering_stats AS
@@ -663,7 +740,7 @@ INSERT INTO course_offering_times(id, offering_id, day_of_week, start_section, e
 (27, 27, 1, 1, 2, 1, 16, 'all'),
 (28, 28, 2, 7, 8, 1, 16, 'all'),
 (29, 29, 3, 5, 6, 1, 16, 'all'),
-(30, 30, 5, 3, 4, 1, 16, 'all'),
+(30, 30, 5, 7, 8, 1, 16, 'all'),
 (31, 31, 1, 3, 4, 1, 16, 'all'),
 (32, 32, 2, 5, 6, 1, 16, 'all'),
 (33, 33, 4, 5, 6, 1, 16, 'all'),

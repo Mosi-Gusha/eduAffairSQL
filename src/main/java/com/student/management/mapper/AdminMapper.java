@@ -345,6 +345,40 @@ public interface AdminMapper {
     int insertOfferingTimes(@Param("offeringId") Long offeringId,
                             @Param("times") List<CreateOfferingRequest.OfferingTimeRequest> times);
 
+    @Select("""
+            <script>
+            SELECT COUNT(*)
+              FROM course_offerings co
+              JOIN course_offering_times existing_time ON existing_time.offering_id = co.id
+              JOIN (
+                <foreach collection="times" item="time" separator=" UNION ALL ">
+                  SELECT #{time.dayOfWeek} AS day_of_week,
+                         #{time.startSection} AS start_section,
+                         #{time.endSection} AS end_section,
+                         #{time.startWeek} AS start_week,
+                         #{time.endWeek} AS end_week,
+                         #{time.weekType} AS week_type
+                </foreach>
+              ) request_time
+             WHERE co.semester_id = #{semesterId}
+               AND (#{offeringId} IS NULL OR co.id != #{offeringId})
+               AND (co.teacher_id = #{teacherId} OR co.classroom_id = #{classroomId})
+               AND existing_time.day_of_week = request_time.day_of_week
+               AND NOT (existing_time.end_section &lt; request_time.start_section
+                        OR existing_time.start_section &gt; request_time.end_section)
+               AND NOT (existing_time.end_week &lt; request_time.start_week
+                        OR existing_time.start_week &gt; request_time.end_week)
+               AND (existing_time.week_type = 'all'
+                    OR request_time.week_type = 'all'
+                    OR existing_time.week_type = request_time.week_type)
+            </script>
+            """)
+    int countOfferingResourceConflicts(@Param("offeringId") Long offeringId,
+                                       @Param("semesterId") Long semesterId,
+                                       @Param("teacherId") Long teacherId,
+                                       @Param("classroomId") Long classroomId,
+                                       @Param("times") List<CreateOfferingRequest.OfferingTimeRequest> times);
+
     @Update("""
             UPDATE course_offerings
                SET course_id = #{request.courseId},

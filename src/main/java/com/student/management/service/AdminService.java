@@ -259,6 +259,7 @@ public class AdminService {
     @Transactional
     public Map<String, Object> createOffering(CreateOfferingRequest request) {
         validateOfferingTimes(request.times());
+        validateOfferingResourceConflicts(null, request);
         validateCourseForNewOffering(request.courseId());
         validateRatio(request.usualRatio(), request.examRatio());
         adminMapper.insertOffering(request);
@@ -271,9 +272,10 @@ public class AdminService {
     @Transactional
     public Map<String, Object> updateOffering(Long offeringId, CreateOfferingRequest request) {
         validateOfferingTimes(request.times());
+        validateOfferingResourceConflicts(offeringId, request);
         validateRatio(request.usualRatio(), request.examRatio());
-        adminMapper.updateOffering(offeringId, request);
         adminMapper.deleteOfferingTimes(offeringId);
+        adminMapper.updateOffering(offeringId, request);
         adminMapper.insertOfferingTimes(offeringId, request.times());
         clearTeachingCaches();
         return message("课程信息已更新");
@@ -668,6 +670,14 @@ public class AdminService {
                 || "all".equals(right.weekType())
                 || left.weekType().equals(right.weekType());
         return sectionOverlap && weekOverlap && weekTypeOverlap;
+    }
+
+    private void validateOfferingResourceConflicts(Long offeringId, CreateOfferingRequest request) {
+        int conflicts = adminMapper.countOfferingResourceConflicts(offeringId, request.semesterId(),
+                request.teacherId(), request.classroomId(), request.times());
+        if (conflicts > 0) {
+            throw new ApiException(400, "同一时间教师或教室已有课程安排");
+        }
     }
 
     private void validateCourseForNewOffering(Long courseId) {
