@@ -22,7 +22,7 @@ public interface TeacherMapper {
                    END AS semesterStatus,
                    u.display_name AS teacherName,
                    CONCAT(cr.building, cr.room_no) AS classroom
-              FROM course_offerings co
+              FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN semesters s ON s.id = co.semester_id
               JOIN teachers t ON t.id = co.teacher_id
@@ -46,12 +46,12 @@ public interface TeacherMapper {
                    COUNT(e.id) AS studentCount,
                    COUNT(g.id) AS gradedCount,
                    COALESCE(SUM(CASE WHEN g.final_score IS NULL THEN 1 ELSE 0 END), 0) AS missingGradeCount
-              FROM course_offerings co
+              FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN semesters s ON s.id = co.semester_id
               JOIN classrooms cr ON cr.id = co.classroom_id
               LEFT JOIN enrollments e ON e.offering_id = co.id AND e.status = 'selected'
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE co.teacher_id = #{teacherId}
              GROUP BY co.id, co.capacity, co.selected_count, co.status, c.code, c.name, c.credit,
                       s.id, s.name, s.start_date, s.end_date, cr.building, cr.room_no
@@ -70,7 +70,7 @@ public interface TeacherMapper {
               JOIN majors m ON m.id = s.major_id
               JOIN departments d ON d.id = m.department_id
               JOIN course_offerings co ON co.id = e.offering_id
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.offering_id = #{offeringId} AND co.teacher_id = #{teacherId} AND e.status = 'selected'
              ORDER BY s.student_no
             """)
@@ -87,7 +87,7 @@ public interface TeacherMapper {
               JOIN majors m ON m.id = s.major_id
               JOIN departments d ON d.id = m.department_id
               JOIN course_offerings co ON co.id = e.offering_id
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.offering_id = #{offeringId}
                AND co.teacher_id = #{teacherId}
                AND e.status = 'selected'
@@ -106,7 +106,7 @@ public interface TeacherMapper {
               FROM enrollments e
               JOIN course_offerings co ON co.id = e.offering_id
               JOIN semesters sem ON sem.id = co.semester_id
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.id = #{enrollmentId}
                AND e.status = 'selected'
             """)
@@ -128,7 +128,7 @@ public interface TeacherMapper {
                    ROUND(AVG(g.final_score), 2) AS avgScore
               FROM course_offerings co
               LEFT JOIN enrollments e ON e.offering_id = co.id AND e.status = 'selected'
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE co.teacher_id = #{teacherId}
             """)
     Map<String, Object> dashboard(@Param("teacherId") Long teacherId);
@@ -143,7 +143,7 @@ public interface TeacherMapper {
                    COUNT(g.id) AS gradedCount
               FROM enrollments e
               JOIN course_offerings co ON co.id = e.offering_id
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.offering_id = #{offeringId}
                AND co.teacher_id = #{teacherId}
                AND e.status = 'selected'

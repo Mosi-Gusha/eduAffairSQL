@@ -335,6 +335,24 @@ function collectOfferingPayload(form) {
   return data;
 }
 
+function validateSemesterPayload(data, excludedId = null) {
+  if (!data.startDate || !data.endDate) return true;
+  if (data.startDate > data.endDate) {
+    toast('学期开始日期不能晚于结束日期', 'error');
+    return false;
+  }
+  const semesters = state.adminCatalog?.semesters || [];
+  const overlap = semesters.some((term) => {
+    if (excludedId && String(term.id) === String(excludedId)) return false;
+    return term.startDate <= data.endDate && term.endDate >= data.startDate;
+  });
+  if (overlap) {
+    toast('学期日期范围不能与已有学期重叠', 'error');
+    return false;
+  }
+  return true;
+}
+
 async function loadLanding() {
   state.landing = await api('/api/public/landing');
 }
@@ -804,6 +822,7 @@ function renderEditOfferingModal(offeringId) {
   const currentSemester = catalog.currentSemester;
   const usualPct = offering.usualRatio != null ? Math.round(Number(offering.usualRatio) * 100) : '';
   const examPct = offering.examRatio != null ? Math.round(Number(offering.examRatio) * 100) : '';
+  const minCapacity = Math.max(1, Number(offering.selectedCount || 0));
   return `
     <div class="modal-backdrop">
       <div class="modal">
@@ -821,7 +840,7 @@ function renderEditOfferingModal(offeringId) {
             <label class="field"><span>教师</span><select name="teacherId" required>${options(catalog.teachers, 'id', (item) => `${item.teacherNo} ${item.name}`, offering.teacherId)}</select></label>
             <label class="field"><span>教室</span><select name="classroomId" required>${options(catalog.classrooms, 'id', (item) => `${item.building}${item.roomNo}`, offering.classroomId)}</select></label>
             ${offeringTimesEditor(offeringTimes(offering))}
-            <label class="field"><span>容量</span><input name="capacity" type="number" min="1" value="${text(offering.capacity)}" required></label>
+            <label class="field"><span>容量</span><input name="capacity" type="number" min="${minCapacity}" value="${text(offering.capacity)}" required></label>
             <label class="field"><span>平时比例(%)</span><input name="usualRatio" type="number" min="0" max="100" step="1" value="${usualPct}" placeholder="40"></label>
             <label class="field"><span>考试比例(%)</span><input name="examRatio" type="number" min="0" max="100" step="1" value="${examPct}" placeholder="60"></label>
             <div class="form-actions"><button class="btn btn-primary" type="submit">保存修改</button></div>
@@ -1643,10 +1662,14 @@ document.addEventListener('submit', async (event) => {
       renderLogin();
       toast('密码已修改，请重新登录');
     } else if (name === 'create-semester') {
-      await api('/api/admin/semesters', { method: 'POST', body: JSON.stringify(asNumberFields(formObject(form), ['maxCredit'])) });
+      const data = asNumberFields(formObject(form), ['maxCredit']);
+      if (!validateSemesterPayload(data)) return;
+      await api('/api/admin/semesters', { method: 'POST', body: JSON.stringify(data) });
       await refresh('学期已新建');
     } else if (name === 'update-semester') {
-      await api(`/api/admin/semesters/${form.dataset.semesterId}`, { method: 'PUT', body: JSON.stringify(asNumberFields(formObject(form), ['maxCredit'])) });
+      const data = asNumberFields(formObject(form), ['maxCredit']);
+      if (!validateSemesterPayload(data, form.dataset.semesterId)) return;
+      await api(`/api/admin/semesters/${form.dataset.semesterId}`, { method: 'PUT', body: JSON.stringify(data) });
       await refresh('学期信息已保存');
     } else if (name === 'create-course-modal') {
       await api('/api/admin/courses', { method: 'POST', body: JSON.stringify(asNumberFields(formObject(form), ['departmentId', 'credit'])) });

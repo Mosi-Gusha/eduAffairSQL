@@ -24,14 +24,14 @@ public interface StudentMapper {
                        SELECT 1
                          FROM enrollments pe
                          JOIN course_offerings pco ON pco.id = pe.offering_id
-                         JOIN grades pg ON pg.enrollment_id = pe.id
+                         JOIN grade_results pg ON pg.enrollment_id = pe.id
                         WHERE pe.student_id = #{studentId}
                           AND pe.status = 'selected'
                           AND pco.course_id = co.course_id
                           AND pco.semester_id != co.semester_id
                           AND pg.final_score >= 60
                    ) AS passedBefore
-              FROM course_offerings co
+              FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
@@ -57,14 +57,14 @@ public interface StudentMapper {
 
     @Update("""
             UPDATE enrollments
-               SET status = 'dropped', dropped_at = CURRENT_TIMESTAMP
+               SET status = 'dropped'
              WHERE id = #{enrollmentId} AND student_id = #{studentId} AND status = 'selected'
             """)
     int dropCourse(@Param("studentId") Long studentId, @Param("enrollmentId") Long enrollmentId);
 
     @Select("""
             SELECT COUNT(*) > 0
-              FROM grades
+              FROM grade_results
              WHERE enrollment_id = #{enrollmentId}
                AND final_score IS NOT NULL
             """)
@@ -98,7 +98,7 @@ public interface StudentMapper {
               JOIN course_offerings co ON co.id = e.offering_id
               JOIN courses c ON c.id = co.course_id
               JOIN semesters s ON s.id = co.semester_id
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.student_id = #{studentId}
                AND e.status = 'selected'
                AND g.final_score IS NOT NULL
@@ -115,7 +115,7 @@ public interface StudentMapper {
               JOIN course_offerings co ON co.id = e.offering_id
               JOIN courses c ON c.id = co.course_id
               JOIN semesters s ON s.id = co.semester_id
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.student_id = #{studentId}
                AND e.status = 'selected'
                AND (#{semesterId} IS NULL OR s.id = #{semesterId})
@@ -134,7 +134,7 @@ public interface StudentMapper {
               LEFT JOIN (
             """ + CURRENT_SEMESTER_ID_SQL + """
               ) current_semester ON 1 = 1
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.student_id = #{studentId} AND e.status = 'selected'
             """)
     Map<String, Object> dashboard(@Param("studentId") Long studentId);

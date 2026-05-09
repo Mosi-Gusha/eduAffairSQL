@@ -5,6 +5,8 @@ CREATE DATABASE IF NOT EXISTS test
 USE test;
 
 SET FOREIGN_KEY_CHECKS = 0;
+DROP VIEW IF EXISTS grade_results;
+DROP VIEW IF EXISTS course_offering_stats;
 DROP TABLE IF EXISTS notices;
 DROP TABLE IF EXISTS grades;
 DROP TABLE IF EXISTS enrollments;
@@ -80,6 +82,7 @@ CREATE TABLE semesters (
   start_date DATE NOT NULL,
   end_date DATE NOT NULL,
   max_credit DECIMAL(5,1) NOT NULL DEFAULT 30.0,
+  CONSTRAINT chk_semesters_date_range CHECK (start_date <= end_date),
   CHECK (max_credit > 0)
 ) ENGINE=InnoDB;
 
@@ -97,7 +100,6 @@ CREATE TABLE classrooms (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   building VARCHAR(64) NOT NULL,
   room_no VARCHAR(32) NOT NULL,
-  capacity SMALLINT NOT NULL,
   UNIQUE KEY uk_room (building, room_no)
 ) ENGINE=InnoDB;
 
@@ -108,7 +110,6 @@ CREATE TABLE course_offerings (
   teacher_id BIGINT NOT NULL,
   classroom_id BIGINT NOT NULL,
   capacity SMALLINT NOT NULL,
-  selected_count SMALLINT NOT NULL DEFAULT 0,
   usual_ratio DECIMAL(4,2) NOT NULL DEFAULT 0.40,
   exam_ratio DECIMAL(4,2) NOT NULL DEFAULT 0.60,
   status ENUM('selecting','closed') NOT NULL DEFAULT 'selecting',
@@ -143,11 +144,10 @@ CREATE TABLE enrollments (
   student_id BIGINT NOT NULL,
   offering_id BIGINT NOT NULL,
   status ENUM('selected','dropped') NOT NULL DEFAULT 'selected',
-  selected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  dropped_at DATETIME NULL,
   CONSTRAINT fk_enrollments_student FOREIGN KEY (student_id) REFERENCES students(id),
   CONSTRAINT fk_enrollments_offering FOREIGN KEY (offering_id) REFERENCES course_offerings(id),
-  UNIQUE KEY uk_student_offering (student_id, offering_id)
+  UNIQUE KEY uk_student_offering (student_id, offering_id),
+  INDEX idx_enrollments_offering_status (offering_id, status)
 ) ENGINE=InnoDB;
 
 CREATE TABLE grades (
@@ -155,8 +155,6 @@ CREATE TABLE grades (
   enrollment_id BIGINT NOT NULL UNIQUE,
   usual_score DECIMAL(5,2) NULL,
   exam_score DECIMAL(5,2) NULL,
-  final_score DECIMAL(5,0) NULL,
-  grade_point DECIMAL(3,2) NULL,
   updated_by BIGINT NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_grades_enrollment FOREIGN KEY (enrollment_id) REFERENCES enrollments(id),
@@ -175,94 +173,147 @@ CREATE TABLE notices (
 
 DELIMITER $$
 
-CREATE TRIGGER trg_enrollments_after_insert
-AFTER INSERT ON enrollments
+CREATE TRIGGER trg_semesters_no_overlap_before_insert
+BEFORE INSERT ON semesters
 FOR EACH ROW
 BEGIN
-  IF NEW.status = 'selected' THEN
-    UPDATE course_offerings
-       SET selected_count = selected_count + 1
-     WHERE id = NEW.offering_id;
+  IF NEW.start_date > NEW.end_date THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'semester start_date must not be after end_date';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+      FROM semesters s
+     WHERE s.start_date <= NEW.end_date
+       AND s.end_date >= NEW.start_date
+     LIMIT 1
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'semester date range overlaps existing semester';
   END IF;
 END$$
 
-CREATE TRIGGER trg_enrollments_after_update
-AFTER UPDATE ON enrollments
+CREATE TRIGGER trg_semesters_no_overlap_before_update
+BEFORE UPDATE ON semesters
 FOR EACH ROW
 BEGIN
-  IF OLD.status <> NEW.status THEN
-    IF OLD.status = 'selected' AND NEW.status = 'dropped' THEN
-      UPDATE course_offerings
-         SET selected_count = GREATEST(selected_count - 1, 0)
-       WHERE id = NEW.offering_id;
-    ELSEIF OLD.status = 'dropped' AND NEW.status = 'selected' THEN
-      UPDATE course_offerings
-         SET selected_count = selected_count + 1
-       WHERE id = NEW.offering_id;
+  IF NEW.start_date > NEW.end_date THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'semester start_date must not be after end_date';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+      FROM semesters s
+     WHERE s.id <> NEW.id
+       AND s.start_date <= NEW.end_date
+       AND s.end_date >= NEW.start_date
+     LIMIT 1
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'semester date range overlaps existing semester';
+  END IF;
+END$$
+
+CREATE TRIGGER trg_enrollments_capacity_before_insert
+BEFORE INSERT ON enrollments
+FOR EACH ROW
+BEGIN
+  DECLARE v_capacity SMALLINT;
+  DECLARE v_selected INT DEFAULT 0;
+  IF NEW.status = 'selected' THEN
+    SELECT capacity
+      INTO v_capacity
+      FROM course_offerings
+     WHERE id = NEW.offering_id
+     FOR UPDATE;
+    SELECT COUNT(*)
+      INTO v_selected
+      FROM enrollments
+     WHERE offering_id = NEW.offering_id
+       AND status = 'selected';
+    IF v_selected >= v_capacity THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'course offering capacity exceeded';
     END IF;
   END IF;
 END$$
 
-CREATE TRIGGER trg_grades_before_insert
-BEFORE INSERT ON grades
+CREATE TRIGGER trg_enrollments_capacity_before_update
+BEFORE UPDATE ON enrollments
 FOR EACH ROW
 BEGIN
-  DECLARE v_usual_ratio DECIMAL(4,2) DEFAULT 0.40;
-  DECLARE v_exam_ratio DECIMAL(4,2) DEFAULT 0.60;
-  IF NEW.usual_score IS NOT NULL AND NEW.exam_score IS NOT NULL THEN
-    SELECT co.usual_ratio, co.exam_ratio
-      INTO v_usual_ratio, v_exam_ratio
-      FROM enrollments e
-      JOIN course_offerings co ON co.id = e.offering_id
-     WHERE e.id = NEW.enrollment_id;
-    SET NEW.final_score = ROUND(NEW.usual_score * v_usual_ratio + NEW.exam_score * v_exam_ratio, 0);
-    SET NEW.grade_point = CASE
-      WHEN NEW.final_score >= 90 THEN 4.0
-      WHEN NEW.final_score >= 85 THEN 3.7
-      WHEN NEW.final_score >= 82 THEN 3.3
-      WHEN NEW.final_score >= 78 THEN 3.0
-      WHEN NEW.final_score >= 75 THEN 2.7
-      WHEN NEW.final_score >= 72 THEN 2.3
-      WHEN NEW.final_score >= 68 THEN 2.0
-      WHEN NEW.final_score >= 66 THEN 1.7
-      WHEN NEW.final_score >= 64 THEN 1.5
-      WHEN NEW.final_score >= 60 THEN 1.0
-      ELSE 0.0
-    END;
+  DECLARE v_capacity SMALLINT;
+  DECLARE v_selected INT DEFAULT 0;
+  IF NEW.status = 'selected' AND (OLD.status <> 'selected' OR OLD.offering_id <> NEW.offering_id) THEN
+    SELECT capacity
+      INTO v_capacity
+      FROM course_offerings
+     WHERE id = NEW.offering_id
+     FOR UPDATE;
+    SELECT COUNT(*)
+      INTO v_selected
+      FROM enrollments
+     WHERE offering_id = NEW.offering_id
+       AND status = 'selected'
+       AND id <> OLD.id;
+    IF v_selected >= v_capacity THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'course offering capacity exceeded';
+    END IF;
   END IF;
 END$$
 
-CREATE TRIGGER trg_grades_before_update
-BEFORE UPDATE ON grades
+CREATE TRIGGER trg_course_offerings_capacity_before_update
+BEFORE UPDATE ON course_offerings
 FOR EACH ROW
 BEGIN
-  DECLARE v_usual_ratio DECIMAL(4,2) DEFAULT 0.40;
-  DECLARE v_exam_ratio DECIMAL(4,2) DEFAULT 0.60;
-  IF NEW.usual_score IS NOT NULL AND NEW.exam_score IS NOT NULL THEN
-    SELECT co.usual_ratio, co.exam_ratio
-      INTO v_usual_ratio, v_exam_ratio
-      FROM enrollments e
-      JOIN course_offerings co ON co.id = e.offering_id
-     WHERE e.id = NEW.enrollment_id;
-    SET NEW.final_score = ROUND(NEW.usual_score * v_usual_ratio + NEW.exam_score * v_exam_ratio, 0);
-    SET NEW.grade_point = CASE
-      WHEN NEW.final_score >= 90 THEN 4.0
-      WHEN NEW.final_score >= 85 THEN 3.7
-      WHEN NEW.final_score >= 82 THEN 3.3
-      WHEN NEW.final_score >= 78 THEN 3.0
-      WHEN NEW.final_score >= 75 THEN 2.7
-      WHEN NEW.final_score >= 72 THEN 2.3
-      WHEN NEW.final_score >= 68 THEN 2.0
-      WHEN NEW.final_score >= 66 THEN 1.7
-      WHEN NEW.final_score >= 64 THEN 1.5
-      WHEN NEW.final_score >= 60 THEN 1.0
-      ELSE 0.0
-    END;
-  ELSE
-    SET NEW.final_score = NULL;
-    SET NEW.grade_point = NULL;
+  DECLARE v_selected INT DEFAULT 0;
+  SELECT COUNT(*)
+    INTO v_selected
+    FROM enrollments
+   WHERE offering_id = OLD.id
+     AND status = 'selected';
+  IF NEW.capacity < v_selected THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'course offering capacity is lower than selected enrollments';
   END IF;
 END$$
+
+CREATE VIEW course_offering_stats AS
+SELECT co.id, co.course_id, co.semester_id, co.teacher_id, co.classroom_id,
+       co.capacity, co.usual_ratio, co.exam_ratio, co.status,
+       COALESCE(selection_counts.selected_count, 0) AS selected_count
+  FROM course_offerings co
+  LEFT JOIN (
+        SELECT offering_id, COUNT(*) AS selected_count
+          FROM enrollments
+         WHERE status = 'selected'
+         GROUP BY offering_id
+       ) selection_counts ON selection_counts.offering_id = co.id$$
+
+CREATE VIEW grade_results AS
+SELECT scored.id, scored.enrollment_id, scored.usual_score, scored.exam_score,
+       scored.final_score,
+       CASE
+         WHEN scored.final_score IS NULL THEN NULL
+         WHEN scored.final_score >= 90 THEN 4.0
+         WHEN scored.final_score >= 85 THEN 3.7
+         WHEN scored.final_score >= 82 THEN 3.3
+         WHEN scored.final_score >= 78 THEN 3.0
+         WHEN scored.final_score >= 75 THEN 2.7
+         WHEN scored.final_score >= 72 THEN 2.3
+         WHEN scored.final_score >= 68 THEN 2.0
+         WHEN scored.final_score >= 66 THEN 1.7
+         WHEN scored.final_score >= 64 THEN 1.5
+         WHEN scored.final_score >= 60 THEN 1.0
+         ELSE 0.0
+       END AS grade_point,
+       scored.updated_by, scored.updated_at
+  FROM (
+        SELECT g.id, g.enrollment_id, g.usual_score, g.exam_score,
+               CASE
+                 WHEN g.usual_score IS NOT NULL AND g.exam_score IS NOT NULL
+                 THEN ROUND(g.usual_score * co.usual_ratio + g.exam_score * co.exam_ratio, 0)
+                 ELSE NULL
+               END AS final_score,
+               g.updated_by, g.updated_at
+          FROM grades g
+          JOIN enrollments e ON e.id = g.enrollment_id
+          JOIN course_offerings co ON co.id = e.offering_id
+       ) scored$$
 
 CREATE PROCEDURE sp_select_course(
   IN p_student_id BIGINT,
@@ -303,7 +354,7 @@ BEGIN
          c.credit, s.start_date, s.end_date, s.max_credit
     INTO v_capacity, v_selected, v_status, v_semester, v_course,
          v_credit, v_sem_start, v_sem_end, v_max_credit
-    FROM course_offerings co
+    FROM course_offering_stats co
     JOIN courses c ON c.id = co.course_id
     JOIN semesters s ON s.id = co.semester_id
    WHERE co.id = p_offering_id;
@@ -330,7 +381,7 @@ BEGIN
     INTO v_passed_before
     FROM enrollments e
     JOIN course_offerings co ON co.id = e.offering_id
-    JOIN grades g ON g.enrollment_id = e.id
+    JOIN grade_results g ON g.enrollment_id = e.id
    WHERE e.student_id = p_student_id
      AND e.status = 'selected'
      AND co.course_id = v_course
@@ -372,9 +423,9 @@ BEGIN
   ELSEIF v_current_credit + v_credit > v_max_credit THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '超过本学期最大学分限制';
   ELSE
-    INSERT INTO enrollments(student_id, offering_id, status, selected_at, dropped_at)
-    VALUES(p_student_id, p_offering_id, 'selected', CURRENT_TIMESTAMP, NULL)
-    ON DUPLICATE KEY UPDATE status = 'selected', selected_at = CURRENT_TIMESTAMP, dropped_at = NULL;
+    INSERT INTO enrollments(student_id, offering_id, status)
+    VALUES(p_student_id, p_offering_id, 'selected')
+    ON DUPLICATE KEY UPDATE status = 'selected';
   END IF;
 END$$
 
@@ -526,61 +577,61 @@ INSERT INTO courses(id, code, name, department_id, credit, status) VALUES
 (39, 'C039', '信息系统项目管理', 1, 2.0, 'enabled'),
 (40, 'C040', '三维动画设计', 6, 3.0, 'enabled');
 
-INSERT INTO classrooms(id, building, room_no, capacity) VALUES
-(1, 'A', '101', 80),
-(2, 'B', '203', 70),
-(3, 'C', '301', 120),
-(4, 'D', '201', 100),
-(5, 'E', '102', 90),
-(6, 'B', '305', 60),
-(7, 'F', '101', 150),
-(8, '体育馆', '1', 40),
-(9, 'A', '302', 75),
-(10, 'G', '204', 45),
-(11, '实验楼', '305', 45),
-(12, 'A', '501', 55);
+INSERT INTO classrooms(id, building, room_no) VALUES
+(1, 'A', '101'),
+(2, 'B', '203'),
+(3, 'C', '301'),
+(4, 'D', '201'),
+(5, 'E', '102'),
+(6, 'B', '305'),
+(7, 'F', '101'),
+(8, '体育馆', '1'),
+(9, 'A', '302'),
+(10, 'G', '204'),
+(11, '实验楼', '305'),
+(12, 'A', '501');
 
-INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, capacity, selected_count, usual_ratio, exam_ratio, status) VALUES
-(1, 1, 1, 1, 1, 80, 0, 0.40, 0.60, 'selecting'),
-(2, 2, 1, 2, 2, 70, 0, 0.30, 0.70, 'selecting'),
-(3, 3, 1, 3, 3, 120, 0, 0.40, 0.60, 'selecting'),
-(4, 4, 1, 4, 4, 100, 0, 0.50, 0.50, 'selecting'),
-(5, 5, 1, 5, 5, 90, 0, 0.40, 0.60, 'selecting'),
-(6, 6, 1, 6, 6, 60, 0, 0.30, 0.70, 'selecting'),
-(7, 7, 1, 7, 7, 150, 0, 0.50, 0.50, 'selecting'),
-(8, 8, 1, 8, 8, 40, 0, 0.70, 0.30, 'selecting'),
-(9, 9, 1, 9, 9, 75, 0, 0.40, 0.60, 'selecting'),
-(10, 10, 1, 10, 10, 45, 0, 0.50, 0.50, 'selecting'),
-(11, 11, 1, 1, 1, 80, 0, 0.40, 0.60, 'selecting'),
-(12, 12, 1, 2, 2, 70, 0, 0.40, 0.60, 'selecting'),
-(13, 13, 1, 3, 3, 110, 0, 0.40, 0.60, 'selecting'),
-(14, 14, 1, 4, 4, 55, 0, 0.60, 0.40, 'selecting'),
-(15, 15, 1, 5, 5, 80, 0, 0.40, 0.60, 'selecting'),
-(16, 16, 1, 6, 6, 60, 0, 0.30, 0.70, 'selecting'),
-(17, 17, 1, 7, 7, 120, 0, 0.50, 0.50, 'selecting'),
-(18, 18, 1, 8, 8, 36, 0, 0.70, 0.30, 'selecting'),
-(19, 19, 1, 9, 9, 60, 0, 0.40, 0.60, 'selecting'),
-(20, 20, 1, 10, 10, 48, 0, 0.50, 0.50, 'selecting'),
-(21, 21, 1, 1, 11, 45, 0, 0.60, 0.40, 'selecting'),
-(22, 22, 1, 2, 2, 50, 0, 0.40, 0.60, 'selecting'),
-(23, 23, 1, 3, 3, 100, 0, 0.40, 0.60, 'selecting'),
-(24, 24, 1, 4, 4, 60, 0, 0.50, 0.50, 'selecting'),
-(25, 25, 1, 5, 5, 75, 0, 0.40, 0.60, 'selecting'),
-(26, 26, 1, 6, 6, 45, 0, 0.40, 0.60, 'selecting'),
-(27, 27, 1, 7, 7, 140, 0, 0.50, 0.50, 'selecting'),
-(28, 28, 1, 8, 8, 35, 0, 0.70, 0.30, 'selecting'),
-(29, 29, 1, 9, 12, 55, 0, 0.40, 0.60, 'selecting'),
-(30, 30, 1, 10, 10, 40, 0, 0.50, 0.50, 'selecting'),
-(31, 31, 1, 1, 1, 65, 0, 0.40, 0.60, 'selecting'),
-(32, 32, 1, 2, 2, 50, 0, 0.40, 0.60, 'selecting'),
-(33, 33, 1, 3, 3, 80, 0, 0.60, 0.40, 'selecting'),
-(34, 34, 1, 4, 4, 50, 0, 0.50, 0.50, 'selecting'),
-(35, 35, 1, 5, 5, 70, 0, 0.50, 0.50, 'selecting'),
-(36, 36, 1, 6, 6, 55, 0, 0.40, 0.60, 'selecting'),
-(37, 37, 1, 7, 7, 95, 0, 0.50, 0.50, 'selecting'),
-(38, 38, 1, 8, 8, 32, 0, 0.70, 0.30, 'selecting'),
-(39, 39, 1, 9, 9, 60, 0, 0.50, 0.50, 'selecting'),
-(40, 40, 1, 10, 10, 42, 0, 0.50, 0.50, 'closed');
+INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, capacity, usual_ratio, exam_ratio, status) VALUES
+(1, 1, 1, 1, 1, 80, 0.40, 0.60, 'selecting'),
+(2, 2, 1, 2, 2, 70, 0.30, 0.70, 'selecting'),
+(3, 3, 1, 3, 3, 120, 0.40, 0.60, 'selecting'),
+(4, 4, 1, 4, 4, 100, 0.50, 0.50, 'selecting'),
+(5, 5, 1, 5, 5, 90, 0.40, 0.60, 'selecting'),
+(6, 6, 1, 6, 6, 60, 0.30, 0.70, 'selecting'),
+(7, 7, 1, 7, 7, 150, 0.50, 0.50, 'selecting'),
+(8, 8, 1, 8, 8, 40, 0.70, 0.30, 'selecting'),
+(9, 9, 1, 9, 9, 75, 0.40, 0.60, 'selecting'),
+(10, 10, 1, 10, 10, 45, 0.50, 0.50, 'selecting'),
+(11, 11, 1, 1, 1, 80, 0.40, 0.60, 'selecting'),
+(12, 12, 1, 2, 2, 70, 0.40, 0.60, 'selecting'),
+(13, 13, 1, 3, 3, 110, 0.40, 0.60, 'selecting'),
+(14, 14, 1, 4, 4, 55, 0.60, 0.40, 'selecting'),
+(15, 15, 1, 5, 5, 80, 0.40, 0.60, 'selecting'),
+(16, 16, 1, 6, 6, 60, 0.30, 0.70, 'selecting'),
+(17, 17, 1, 7, 7, 120, 0.50, 0.50, 'selecting'),
+(18, 18, 1, 8, 8, 36, 0.70, 0.30, 'selecting'),
+(19, 19, 1, 9, 9, 60, 0.40, 0.60, 'selecting'),
+(20, 20, 1, 10, 10, 48, 0.50, 0.50, 'selecting'),
+(21, 21, 1, 1, 11, 45, 0.60, 0.40, 'selecting'),
+(22, 22, 1, 2, 2, 50, 0.40, 0.60, 'selecting'),
+(23, 23, 1, 3, 3, 100, 0.40, 0.60, 'selecting'),
+(24, 24, 1, 4, 4, 60, 0.50, 0.50, 'selecting'),
+(25, 25, 1, 5, 5, 75, 0.40, 0.60, 'selecting'),
+(26, 26, 1, 6, 6, 45, 0.40, 0.60, 'selecting'),
+(27, 27, 1, 7, 7, 140, 0.50, 0.50, 'selecting'),
+(28, 28, 1, 8, 8, 35, 0.70, 0.30, 'selecting'),
+(29, 29, 1, 9, 12, 55, 0.40, 0.60, 'selecting'),
+(30, 30, 1, 10, 10, 40, 0.50, 0.50, 'selecting'),
+(31, 31, 1, 1, 1, 65, 0.40, 0.60, 'selecting'),
+(32, 32, 1, 2, 2, 50, 0.40, 0.60, 'selecting'),
+(33, 33, 1, 3, 3, 80, 0.60, 0.40, 'selecting'),
+(34, 34, 1, 4, 4, 50, 0.50, 0.50, 'selecting'),
+(35, 35, 1, 5, 5, 70, 0.50, 0.50, 'selecting'),
+(36, 36, 1, 6, 6, 55, 0.40, 0.60, 'selecting'),
+(37, 37, 1, 7, 7, 95, 0.50, 0.50, 'selecting'),
+(38, 38, 1, 8, 8, 32, 0.70, 0.30, 'selecting'),
+(39, 39, 1, 9, 9, 60, 0.50, 0.50, 'selecting'),
+(40, 40, 1, 10, 10, 42, 0.50, 0.50, 'closed');
 
 INSERT INTO course_offering_times(id, offering_id, day_of_week, start_section, end_section, start_week, end_week, week_type) VALUES
 (1, 1, 1, 1, 2, 1, 16, 'all'),
@@ -624,37 +675,37 @@ INSERT INTO course_offering_times(id, offering_id, day_of_week, start_section, e
 (39, 39, 5, 1, 2, 1, 16, 'all'),
 (40, 40, 3, 1, 2, 1, 16, 'all');
 
-INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, capacity, selected_count, usual_ratio, exam_ratio, status) VALUES
-(41, 1, 2, 1, 1, 80, 0, 0.40, 0.60, 'closed'),
-(42, 2, 2, 2, 2, 70, 0, 0.30, 0.70, 'closed'),
-(43, 3, 2, 3, 3, 120, 0, 0.40, 0.60, 'closed'),
-(44, 4, 2, 4, 4, 100, 0, 0.50, 0.50, 'closed'),
-(45, 5, 2, 5, 5, 90, 0, 0.40, 0.60, 'closed'),
-(46, 6, 2, 6, 6, 60, 0, 0.30, 0.70, 'closed'),
-(47, 7, 2, 7, 7, 150, 0, 0.50, 0.50, 'closed'),
-(48, 8, 2, 8, 8, 40, 0, 0.70, 0.30, 'closed'),
-(49, 9, 2, 9, 9, 75, 0, 0.40, 0.60, 'closed'),
-(50, 10, 2, 10, 10, 45, 0, 0.50, 0.50, 'closed'),
-(51, 11, 2, 1, 1, 80, 0, 0.40, 0.60, 'closed'),
-(52, 12, 2, 2, 2, 70, 0, 0.40, 0.60, 'closed'),
-(53, 13, 2, 3, 3, 110, 0, 0.40, 0.60, 'closed'),
-(54, 14, 2, 4, 4, 55, 0, 0.60, 0.40, 'closed'),
-(55, 15, 2, 5, 5, 80, 0, 0.40, 0.60, 'closed'),
-(56, 16, 2, 6, 6, 60, 0, 0.30, 0.70, 'closed'),
-(57, 17, 2, 7, 7, 120, 0, 0.50, 0.50, 'closed'),
-(58, 18, 2, 8, 8, 36, 0, 0.70, 0.30, 'closed'),
-(59, 19, 2, 9, 9, 60, 0, 0.40, 0.60, 'closed'),
-(60, 20, 2, 10, 10, 48, 0, 0.50, 0.50, 'closed'),
-(61, 1, 3, 1, 1, 80, 0, 0.40, 0.60, 'closed'),
-(62, 2, 3, 2, 2, 70, 0, 0.30, 0.70, 'closed'),
-(63, 3, 3, 3, 3, 120, 0, 0.40, 0.60, 'closed'),
-(64, 4, 3, 4, 4, 100, 0, 0.50, 0.50, 'closed'),
-(65, 5, 3, 5, 5, 90, 0, 0.40, 0.60, 'closed'),
-(66, 6, 3, 6, 6, 60, 0, 0.30, 0.70, 'closed'),
-(67, 7, 3, 7, 7, 150, 0, 0.50, 0.50, 'closed'),
-(68, 8, 3, 8, 8, 40, 0, 0.70, 0.30, 'closed'),
-(69, 9, 3, 9, 9, 75, 0, 0.40, 0.60, 'closed'),
-(70, 10, 3, 10, 10, 45, 0, 0.50, 0.50, 'closed');
+INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, capacity, usual_ratio, exam_ratio, status) VALUES
+(41, 1, 2, 1, 1, 80, 0.40, 0.60, 'closed'),
+(42, 2, 2, 2, 2, 70, 0.30, 0.70, 'closed'),
+(43, 3, 2, 3, 3, 120, 0.40, 0.60, 'closed'),
+(44, 4, 2, 4, 4, 100, 0.50, 0.50, 'closed'),
+(45, 5, 2, 5, 5, 90, 0.40, 0.60, 'closed'),
+(46, 6, 2, 6, 6, 60, 0.30, 0.70, 'closed'),
+(47, 7, 2, 7, 7, 150, 0.50, 0.50, 'closed'),
+(48, 8, 2, 8, 8, 40, 0.70, 0.30, 'closed'),
+(49, 9, 2, 9, 9, 75, 0.40, 0.60, 'closed'),
+(50, 10, 2, 10, 10, 45, 0.50, 0.50, 'closed'),
+(51, 11, 2, 1, 1, 80, 0.40, 0.60, 'closed'),
+(52, 12, 2, 2, 2, 70, 0.40, 0.60, 'closed'),
+(53, 13, 2, 3, 3, 110, 0.40, 0.60, 'closed'),
+(54, 14, 2, 4, 4, 55, 0.60, 0.40, 'closed'),
+(55, 15, 2, 5, 5, 80, 0.40, 0.60, 'closed'),
+(56, 16, 2, 6, 6, 60, 0.30, 0.70, 'closed'),
+(57, 17, 2, 7, 7, 120, 0.50, 0.50, 'closed'),
+(58, 18, 2, 8, 8, 36, 0.70, 0.30, 'closed'),
+(59, 19, 2, 9, 9, 60, 0.40, 0.60, 'closed'),
+(60, 20, 2, 10, 10, 48, 0.50, 0.50, 'closed'),
+(61, 1, 3, 1, 1, 80, 0.40, 0.60, 'closed'),
+(62, 2, 3, 2, 2, 70, 0.30, 0.70, 'closed'),
+(63, 3, 3, 3, 3, 120, 0.40, 0.60, 'closed'),
+(64, 4, 3, 4, 4, 100, 0.50, 0.50, 'closed'),
+(65, 5, 3, 5, 5, 90, 0.40, 0.60, 'closed'),
+(66, 6, 3, 6, 6, 60, 0.30, 0.70, 'closed'),
+(67, 7, 3, 7, 7, 150, 0.50, 0.50, 'closed'),
+(68, 8, 3, 8, 8, 40, 0.70, 0.30, 'closed'),
+(69, 9, 3, 9, 9, 75, 0.40, 0.60, 'closed'),
+(70, 10, 3, 10, 10, 45, 0.50, 0.50, 'closed');
 
 INSERT INTO course_offering_times(id, offering_id, day_of_week, start_section, end_section, start_week, end_week, week_type) VALUES
 (41, 41, 1, 1, 2, 1, 16, 'all'),
@@ -688,523 +739,523 @@ INSERT INTO course_offering_times(id, offering_id, day_of_week, start_section, e
 (69, 69, 4, 5, 6, 1, 16, 'all'),
 (70, 70, 5, 3, 4, 1, 16, 'all');
 
-INSERT INTO enrollments(id, student_id, offering_id, status, selected_at, dropped_at) VALUES
-(1, 1, 21, 'selected', CURRENT_TIMESTAMP, NULL),
-(2, 1, 25, 'selected', CURRENT_TIMESTAMP, NULL),
-(3, 1, 29, 'selected', CURRENT_TIMESTAMP, NULL),
-(4, 1, 33, 'selected', CURRENT_TIMESTAMP, NULL),
-(5, 1, 37, 'selected', CURRENT_TIMESTAMP, NULL),
-(6, 1, 51, 'selected', CURRENT_TIMESTAMP, NULL),
-(7, 1, 53, 'selected', CURRENT_TIMESTAMP, NULL),
-(8, 1, 55, 'selected', CURRENT_TIMESTAMP, NULL),
-(9, 1, 57, 'selected', CURRENT_TIMESTAMP, NULL),
-(10, 1, 59, 'selected', CURRENT_TIMESTAMP, NULL),
-(11, 1, 61, 'selected', CURRENT_TIMESTAMP, NULL),
-(12, 1, 63, 'selected', CURRENT_TIMESTAMP, NULL),
-(13, 1, 65, 'selected', CURRENT_TIMESTAMP, NULL),
-(14, 1, 67, 'selected', CURRENT_TIMESTAMP, NULL),
-(15, 1, 69, 'selected', CURRENT_TIMESTAMP, NULL),
-(16, 2, 22, 'selected', CURRENT_TIMESTAMP, NULL),
-(17, 2, 26, 'selected', CURRENT_TIMESTAMP, NULL),
-(18, 2, 30, 'selected', CURRENT_TIMESTAMP, NULL),
-(19, 2, 34, 'selected', CURRENT_TIMESTAMP, NULL),
-(20, 2, 38, 'selected', CURRENT_TIMESTAMP, NULL),
-(21, 2, 52, 'selected', CURRENT_TIMESTAMP, NULL),
-(22, 2, 54, 'selected', CURRENT_TIMESTAMP, NULL),
-(23, 2, 56, 'selected', CURRENT_TIMESTAMP, NULL),
-(24, 2, 58, 'selected', CURRENT_TIMESTAMP, NULL),
-(25, 2, 60, 'selected', CURRENT_TIMESTAMP, NULL),
-(26, 2, 62, 'selected', CURRENT_TIMESTAMP, NULL),
-(27, 2, 64, 'selected', CURRENT_TIMESTAMP, NULL),
-(28, 2, 66, 'selected', CURRENT_TIMESTAMP, NULL),
-(29, 2, 68, 'selected', CURRENT_TIMESTAMP, NULL),
-(30, 2, 70, 'selected', CURRENT_TIMESTAMP, NULL),
-(31, 3, 23, 'selected', CURRENT_TIMESTAMP, NULL),
-(32, 3, 27, 'selected', CURRENT_TIMESTAMP, NULL),
-(33, 3, 31, 'selected', CURRENT_TIMESTAMP, NULL),
-(34, 3, 35, 'selected', CURRENT_TIMESTAMP, NULL),
-(35, 3, 39, 'selected', CURRENT_TIMESTAMP, NULL),
-(36, 3, 53, 'selected', CURRENT_TIMESTAMP, NULL),
-(37, 3, 55, 'selected', CURRENT_TIMESTAMP, NULL),
-(38, 3, 57, 'selected', CURRENT_TIMESTAMP, NULL),
-(39, 3, 59, 'selected', CURRENT_TIMESTAMP, NULL),
-(40, 3, 51, 'selected', CURRENT_TIMESTAMP, NULL),
-(41, 3, 63, 'selected', CURRENT_TIMESTAMP, NULL),
-(42, 3, 65, 'selected', CURRENT_TIMESTAMP, NULL),
-(43, 3, 67, 'selected', CURRENT_TIMESTAMP, NULL),
-(44, 3, 69, 'selected', CURRENT_TIMESTAMP, NULL),
-(45, 3, 61, 'selected', CURRENT_TIMESTAMP, NULL),
-(46, 4, 24, 'selected', CURRENT_TIMESTAMP, NULL),
-(47, 4, 28, 'selected', CURRENT_TIMESTAMP, NULL),
-(48, 4, 32, 'selected', CURRENT_TIMESTAMP, NULL),
-(49, 4, 36, 'selected', CURRENT_TIMESTAMP, NULL),
-(50, 4, 21, 'selected', CURRENT_TIMESTAMP, NULL),
-(51, 4, 54, 'selected', CURRENT_TIMESTAMP, NULL),
-(52, 4, 56, 'selected', CURRENT_TIMESTAMP, NULL),
-(53, 4, 58, 'selected', CURRENT_TIMESTAMP, NULL),
-(54, 4, 60, 'selected', CURRENT_TIMESTAMP, NULL),
-(55, 4, 52, 'selected', CURRENT_TIMESTAMP, NULL),
-(56, 4, 64, 'selected', CURRENT_TIMESTAMP, NULL),
-(57, 4, 66, 'selected', CURRENT_TIMESTAMP, NULL),
-(58, 4, 68, 'selected', CURRENT_TIMESTAMP, NULL),
-(59, 4, 70, 'selected', CURRENT_TIMESTAMP, NULL),
-(60, 4, 62, 'selected', CURRENT_TIMESTAMP, NULL);
+INSERT INTO enrollments(id, student_id, offering_id, status) VALUES
+(1, 1, 21, 'selected'),
+(2, 1, 25, 'selected'),
+(3, 1, 29, 'selected'),
+(4, 1, 33, 'selected'),
+(5, 1, 37, 'selected'),
+(6, 1, 51, 'selected'),
+(7, 1, 53, 'selected'),
+(8, 1, 55, 'selected'),
+(9, 1, 57, 'selected'),
+(10, 1, 59, 'selected'),
+(11, 1, 61, 'selected'),
+(12, 1, 63, 'selected'),
+(13, 1, 65, 'selected'),
+(14, 1, 67, 'selected'),
+(15, 1, 69, 'selected'),
+(16, 2, 22, 'selected'),
+(17, 2, 26, 'selected'),
+(18, 2, 30, 'selected'),
+(19, 2, 34, 'selected'),
+(20, 2, 38, 'selected'),
+(21, 2, 52, 'selected'),
+(22, 2, 54, 'selected'),
+(23, 2, 56, 'selected'),
+(24, 2, 58, 'selected'),
+(25, 2, 60, 'selected'),
+(26, 2, 62, 'selected'),
+(27, 2, 64, 'selected'),
+(28, 2, 66, 'selected'),
+(29, 2, 68, 'selected'),
+(30, 2, 70, 'selected'),
+(31, 3, 23, 'selected'),
+(32, 3, 27, 'selected'),
+(33, 3, 31, 'selected'),
+(34, 3, 35, 'selected'),
+(35, 3, 39, 'selected'),
+(36, 3, 53, 'selected'),
+(37, 3, 55, 'selected'),
+(38, 3, 57, 'selected'),
+(39, 3, 59, 'selected'),
+(40, 3, 51, 'selected'),
+(41, 3, 63, 'selected'),
+(42, 3, 65, 'selected'),
+(43, 3, 67, 'selected'),
+(44, 3, 69, 'selected'),
+(45, 3, 61, 'selected'),
+(46, 4, 24, 'selected'),
+(47, 4, 28, 'selected'),
+(48, 4, 32, 'selected'),
+(49, 4, 36, 'selected'),
+(50, 4, 21, 'selected'),
+(51, 4, 54, 'selected'),
+(52, 4, 56, 'selected'),
+(53, 4, 58, 'selected'),
+(54, 4, 60, 'selected'),
+(55, 4, 52, 'selected'),
+(56, 4, 64, 'selected'),
+(57, 4, 66, 'selected'),
+(58, 4, 68, 'selected'),
+(59, 4, 70, 'selected'),
+(60, 4, 62, 'selected');
 
-INSERT INTO enrollments(id, student_id, offering_id, status, selected_at, dropped_at) VALUES
-(61, 5, 25, 'selected', CURRENT_TIMESTAMP, NULL),
-(62, 5, 29, 'selected', CURRENT_TIMESTAMP, NULL),
-(63, 5, 33, 'selected', CURRENT_TIMESTAMP, NULL),
-(64, 5, 37, 'selected', CURRENT_TIMESTAMP, NULL),
-(65, 5, 22, 'selected', CURRENT_TIMESTAMP, NULL),
-(66, 5, 55, 'selected', CURRENT_TIMESTAMP, NULL),
-(67, 5, 57, 'selected', CURRENT_TIMESTAMP, NULL),
-(68, 5, 59, 'selected', CURRENT_TIMESTAMP, NULL),
-(69, 5, 51, 'selected', CURRENT_TIMESTAMP, NULL),
-(70, 5, 53, 'selected', CURRENT_TIMESTAMP, NULL),
-(71, 5, 65, 'selected', CURRENT_TIMESTAMP, NULL),
-(72, 5, 67, 'selected', CURRENT_TIMESTAMP, NULL),
-(73, 5, 69, 'selected', CURRENT_TIMESTAMP, NULL),
-(74, 5, 61, 'selected', CURRENT_TIMESTAMP, NULL),
-(75, 5, 63, 'selected', CURRENT_TIMESTAMP, NULL),
-(76, 6, 26, 'selected', CURRENT_TIMESTAMP, NULL),
-(77, 6, 30, 'selected', CURRENT_TIMESTAMP, NULL),
-(78, 6, 34, 'selected', CURRENT_TIMESTAMP, NULL),
-(79, 6, 38, 'selected', CURRENT_TIMESTAMP, NULL),
-(80, 6, 23, 'selected', CURRENT_TIMESTAMP, NULL),
-(81, 6, 56, 'selected', CURRENT_TIMESTAMP, NULL),
-(82, 6, 58, 'selected', CURRENT_TIMESTAMP, NULL),
-(83, 6, 60, 'selected', CURRENT_TIMESTAMP, NULL),
-(84, 6, 52, 'selected', CURRENT_TIMESTAMP, NULL),
-(85, 6, 54, 'selected', CURRENT_TIMESTAMP, NULL),
-(86, 6, 66, 'selected', CURRENT_TIMESTAMP, NULL),
-(87, 6, 68, 'selected', CURRENT_TIMESTAMP, NULL),
-(88, 6, 70, 'selected', CURRENT_TIMESTAMP, NULL),
-(89, 6, 62, 'selected', CURRENT_TIMESTAMP, NULL),
-(90, 6, 64, 'selected', CURRENT_TIMESTAMP, NULL),
-(91, 7, 27, 'selected', CURRENT_TIMESTAMP, NULL),
-(92, 7, 31, 'selected', CURRENT_TIMESTAMP, NULL),
-(93, 7, 35, 'selected', CURRENT_TIMESTAMP, NULL),
-(94, 7, 39, 'selected', CURRENT_TIMESTAMP, NULL),
-(95, 7, 24, 'selected', CURRENT_TIMESTAMP, NULL),
-(96, 7, 57, 'selected', CURRENT_TIMESTAMP, NULL),
-(97, 7, 59, 'selected', CURRENT_TIMESTAMP, NULL),
-(98, 7, 51, 'selected', CURRENT_TIMESTAMP, NULL),
-(99, 7, 53, 'selected', CURRENT_TIMESTAMP, NULL),
-(100, 7, 55, 'selected', CURRENT_TIMESTAMP, NULL),
-(101, 7, 67, 'selected', CURRENT_TIMESTAMP, NULL),
-(102, 7, 69, 'selected', CURRENT_TIMESTAMP, NULL),
-(103, 7, 61, 'selected', CURRENT_TIMESTAMP, NULL),
-(104, 7, 63, 'selected', CURRENT_TIMESTAMP, NULL),
-(105, 7, 65, 'selected', CURRENT_TIMESTAMP, NULL),
-(106, 8, 28, 'selected', CURRENT_TIMESTAMP, NULL),
-(107, 8, 32, 'selected', CURRENT_TIMESTAMP, NULL),
-(108, 8, 36, 'selected', CURRENT_TIMESTAMP, NULL),
-(109, 8, 21, 'selected', CURRENT_TIMESTAMP, NULL),
-(110, 8, 25, 'selected', CURRENT_TIMESTAMP, NULL),
-(111, 8, 58, 'selected', CURRENT_TIMESTAMP, NULL),
-(112, 8, 60, 'selected', CURRENT_TIMESTAMP, NULL),
-(113, 8, 52, 'selected', CURRENT_TIMESTAMP, NULL),
-(114, 8, 54, 'selected', CURRENT_TIMESTAMP, NULL),
-(115, 8, 56, 'selected', CURRENT_TIMESTAMP, NULL),
-(116, 8, 68, 'selected', CURRENT_TIMESTAMP, NULL),
-(117, 8, 70, 'selected', CURRENT_TIMESTAMP, NULL),
-(118, 8, 62, 'selected', CURRENT_TIMESTAMP, NULL),
-(119, 8, 64, 'selected', CURRENT_TIMESTAMP, NULL),
-(120, 8, 66, 'selected', CURRENT_TIMESTAMP, NULL);
+INSERT INTO enrollments(id, student_id, offering_id, status) VALUES
+(61, 5, 25, 'selected'),
+(62, 5, 29, 'selected'),
+(63, 5, 33, 'selected'),
+(64, 5, 37, 'selected'),
+(65, 5, 22, 'selected'),
+(66, 5, 55, 'selected'),
+(67, 5, 57, 'selected'),
+(68, 5, 59, 'selected'),
+(69, 5, 51, 'selected'),
+(70, 5, 53, 'selected'),
+(71, 5, 65, 'selected'),
+(72, 5, 67, 'selected'),
+(73, 5, 69, 'selected'),
+(74, 5, 61, 'selected'),
+(75, 5, 63, 'selected'),
+(76, 6, 26, 'selected'),
+(77, 6, 30, 'selected'),
+(78, 6, 34, 'selected'),
+(79, 6, 38, 'selected'),
+(80, 6, 23, 'selected'),
+(81, 6, 56, 'selected'),
+(82, 6, 58, 'selected'),
+(83, 6, 60, 'selected'),
+(84, 6, 52, 'selected'),
+(85, 6, 54, 'selected'),
+(86, 6, 66, 'selected'),
+(87, 6, 68, 'selected'),
+(88, 6, 70, 'selected'),
+(89, 6, 62, 'selected'),
+(90, 6, 64, 'selected'),
+(91, 7, 27, 'selected'),
+(92, 7, 31, 'selected'),
+(93, 7, 35, 'selected'),
+(94, 7, 39, 'selected'),
+(95, 7, 24, 'selected'),
+(96, 7, 57, 'selected'),
+(97, 7, 59, 'selected'),
+(98, 7, 51, 'selected'),
+(99, 7, 53, 'selected'),
+(100, 7, 55, 'selected'),
+(101, 7, 67, 'selected'),
+(102, 7, 69, 'selected'),
+(103, 7, 61, 'selected'),
+(104, 7, 63, 'selected'),
+(105, 7, 65, 'selected'),
+(106, 8, 28, 'selected'),
+(107, 8, 32, 'selected'),
+(108, 8, 36, 'selected'),
+(109, 8, 21, 'selected'),
+(110, 8, 25, 'selected'),
+(111, 8, 58, 'selected'),
+(112, 8, 60, 'selected'),
+(113, 8, 52, 'selected'),
+(114, 8, 54, 'selected'),
+(115, 8, 56, 'selected'),
+(116, 8, 68, 'selected'),
+(117, 8, 70, 'selected'),
+(118, 8, 62, 'selected'),
+(119, 8, 64, 'selected'),
+(120, 8, 66, 'selected');
 
-INSERT INTO enrollments(id, student_id, offering_id, status, selected_at, dropped_at) VALUES
-(121, 9, 29, 'selected', CURRENT_TIMESTAMP, NULL),
-(122, 9, 33, 'selected', CURRENT_TIMESTAMP, NULL),
-(123, 9, 37, 'selected', CURRENT_TIMESTAMP, NULL),
-(124, 9, 22, 'selected', CURRENT_TIMESTAMP, NULL),
-(125, 9, 26, 'selected', CURRENT_TIMESTAMP, NULL),
-(126, 9, 59, 'selected', CURRENT_TIMESTAMP, NULL),
-(127, 9, 51, 'selected', CURRENT_TIMESTAMP, NULL),
-(128, 9, 53, 'selected', CURRENT_TIMESTAMP, NULL),
-(129, 9, 55, 'selected', CURRENT_TIMESTAMP, NULL),
-(130, 9, 57, 'selected', CURRENT_TIMESTAMP, NULL),
-(131, 9, 69, 'selected', CURRENT_TIMESTAMP, NULL),
-(132, 9, 61, 'selected', CURRENT_TIMESTAMP, NULL),
-(133, 9, 63, 'selected', CURRENT_TIMESTAMP, NULL),
-(134, 9, 65, 'selected', CURRENT_TIMESTAMP, NULL),
-(135, 9, 67, 'selected', CURRENT_TIMESTAMP, NULL),
-(136, 10, 30, 'selected', CURRENT_TIMESTAMP, NULL),
-(137, 10, 34, 'selected', CURRENT_TIMESTAMP, NULL),
-(138, 10, 38, 'selected', CURRENT_TIMESTAMP, NULL),
-(139, 10, 23, 'selected', CURRENT_TIMESTAMP, NULL),
-(140, 10, 27, 'selected', CURRENT_TIMESTAMP, NULL),
-(141, 10, 60, 'selected', CURRENT_TIMESTAMP, NULL),
-(142, 10, 52, 'selected', CURRENT_TIMESTAMP, NULL),
-(143, 10, 54, 'selected', CURRENT_TIMESTAMP, NULL),
-(144, 10, 56, 'selected', CURRENT_TIMESTAMP, NULL),
-(145, 10, 58, 'selected', CURRENT_TIMESTAMP, NULL),
-(146, 10, 70, 'selected', CURRENT_TIMESTAMP, NULL),
-(147, 10, 62, 'selected', CURRENT_TIMESTAMP, NULL),
-(148, 10, 64, 'selected', CURRENT_TIMESTAMP, NULL),
-(149, 10, 66, 'selected', CURRENT_TIMESTAMP, NULL),
-(150, 10, 68, 'selected', CURRENT_TIMESTAMP, NULL),
-(151, 11, 31, 'selected', CURRENT_TIMESTAMP, NULL),
-(152, 11, 35, 'selected', CURRENT_TIMESTAMP, NULL),
-(153, 11, 39, 'selected', CURRENT_TIMESTAMP, NULL),
-(154, 11, 24, 'selected', CURRENT_TIMESTAMP, NULL),
-(155, 11, 28, 'selected', CURRENT_TIMESTAMP, NULL),
-(156, 11, 51, 'selected', CURRENT_TIMESTAMP, NULL),
-(157, 11, 53, 'selected', CURRENT_TIMESTAMP, NULL),
-(158, 11, 55, 'selected', CURRENT_TIMESTAMP, NULL),
-(159, 11, 57, 'selected', CURRENT_TIMESTAMP, NULL),
-(160, 11, 59, 'selected', CURRENT_TIMESTAMP, NULL),
-(161, 11, 61, 'selected', CURRENT_TIMESTAMP, NULL),
-(162, 11, 63, 'selected', CURRENT_TIMESTAMP, NULL),
-(163, 11, 65, 'selected', CURRENT_TIMESTAMP, NULL),
-(164, 11, 67, 'selected', CURRENT_TIMESTAMP, NULL),
-(165, 11, 69, 'selected', CURRENT_TIMESTAMP, NULL),
-(166, 12, 32, 'selected', CURRENT_TIMESTAMP, NULL),
-(167, 12, 36, 'selected', CURRENT_TIMESTAMP, NULL),
-(168, 12, 21, 'selected', CURRENT_TIMESTAMP, NULL),
-(169, 12, 25, 'selected', CURRENT_TIMESTAMP, NULL),
-(170, 12, 29, 'selected', CURRENT_TIMESTAMP, NULL),
-(171, 12, 52, 'selected', CURRENT_TIMESTAMP, NULL),
-(172, 12, 54, 'selected', CURRENT_TIMESTAMP, NULL),
-(173, 12, 56, 'selected', CURRENT_TIMESTAMP, NULL),
-(174, 12, 58, 'selected', CURRENT_TIMESTAMP, NULL),
-(175, 12, 60, 'selected', CURRENT_TIMESTAMP, NULL),
-(176, 12, 62, 'selected', CURRENT_TIMESTAMP, NULL),
-(177, 12, 64, 'selected', CURRENT_TIMESTAMP, NULL),
-(178, 12, 66, 'selected', CURRENT_TIMESTAMP, NULL),
-(179, 12, 68, 'selected', CURRENT_TIMESTAMP, NULL),
-(180, 12, 70, 'selected', CURRENT_TIMESTAMP, NULL);
+INSERT INTO enrollments(id, student_id, offering_id, status) VALUES
+(121, 9, 29, 'selected'),
+(122, 9, 33, 'selected'),
+(123, 9, 37, 'selected'),
+(124, 9, 22, 'selected'),
+(125, 9, 26, 'selected'),
+(126, 9, 59, 'selected'),
+(127, 9, 51, 'selected'),
+(128, 9, 53, 'selected'),
+(129, 9, 55, 'selected'),
+(130, 9, 57, 'selected'),
+(131, 9, 69, 'selected'),
+(132, 9, 61, 'selected'),
+(133, 9, 63, 'selected'),
+(134, 9, 65, 'selected'),
+(135, 9, 67, 'selected'),
+(136, 10, 30, 'selected'),
+(137, 10, 34, 'selected'),
+(138, 10, 38, 'selected'),
+(139, 10, 23, 'selected'),
+(140, 10, 27, 'selected'),
+(141, 10, 60, 'selected'),
+(142, 10, 52, 'selected'),
+(143, 10, 54, 'selected'),
+(144, 10, 56, 'selected'),
+(145, 10, 58, 'selected'),
+(146, 10, 70, 'selected'),
+(147, 10, 62, 'selected'),
+(148, 10, 64, 'selected'),
+(149, 10, 66, 'selected'),
+(150, 10, 68, 'selected'),
+(151, 11, 31, 'selected'),
+(152, 11, 35, 'selected'),
+(153, 11, 39, 'selected'),
+(154, 11, 24, 'selected'),
+(155, 11, 28, 'selected'),
+(156, 11, 51, 'selected'),
+(157, 11, 53, 'selected'),
+(158, 11, 55, 'selected'),
+(159, 11, 57, 'selected'),
+(160, 11, 59, 'selected'),
+(161, 11, 61, 'selected'),
+(162, 11, 63, 'selected'),
+(163, 11, 65, 'selected'),
+(164, 11, 67, 'selected'),
+(165, 11, 69, 'selected'),
+(166, 12, 32, 'selected'),
+(167, 12, 36, 'selected'),
+(168, 12, 21, 'selected'),
+(169, 12, 25, 'selected'),
+(170, 12, 29, 'selected'),
+(171, 12, 52, 'selected'),
+(172, 12, 54, 'selected'),
+(173, 12, 56, 'selected'),
+(174, 12, 58, 'selected'),
+(175, 12, 60, 'selected'),
+(176, 12, 62, 'selected'),
+(177, 12, 64, 'selected'),
+(178, 12, 66, 'selected'),
+(179, 12, 68, 'selected'),
+(180, 12, 70, 'selected');
 
-INSERT INTO enrollments(id, student_id, offering_id, status, selected_at, dropped_at) VALUES
-(181, 13, 33, 'selected', CURRENT_TIMESTAMP, NULL),
-(182, 13, 37, 'selected', CURRENT_TIMESTAMP, NULL),
-(183, 13, 22, 'selected', CURRENT_TIMESTAMP, NULL),
-(184, 13, 26, 'selected', CURRENT_TIMESTAMP, NULL),
-(185, 13, 30, 'selected', CURRENT_TIMESTAMP, NULL),
-(186, 13, 53, 'selected', CURRENT_TIMESTAMP, NULL),
-(187, 13, 55, 'selected', CURRENT_TIMESTAMP, NULL),
-(188, 13, 57, 'selected', CURRENT_TIMESTAMP, NULL),
-(189, 13, 59, 'selected', CURRENT_TIMESTAMP, NULL),
-(190, 13, 51, 'selected', CURRENT_TIMESTAMP, NULL),
-(191, 13, 63, 'selected', CURRENT_TIMESTAMP, NULL),
-(192, 13, 65, 'selected', CURRENT_TIMESTAMP, NULL),
-(193, 13, 67, 'selected', CURRENT_TIMESTAMP, NULL),
-(194, 13, 69, 'selected', CURRENT_TIMESTAMP, NULL),
-(195, 13, 61, 'selected', CURRENT_TIMESTAMP, NULL),
-(196, 14, 34, 'selected', CURRENT_TIMESTAMP, NULL),
-(197, 14, 38, 'selected', CURRENT_TIMESTAMP, NULL),
-(198, 14, 23, 'selected', CURRENT_TIMESTAMP, NULL),
-(199, 14, 27, 'selected', CURRENT_TIMESTAMP, NULL),
-(200, 14, 31, 'selected', CURRENT_TIMESTAMP, NULL),
-(201, 14, 54, 'selected', CURRENT_TIMESTAMP, NULL),
-(202, 14, 56, 'selected', CURRENT_TIMESTAMP, NULL),
-(203, 14, 58, 'selected', CURRENT_TIMESTAMP, NULL),
-(204, 14, 60, 'selected', CURRENT_TIMESTAMP, NULL),
-(205, 14, 52, 'selected', CURRENT_TIMESTAMP, NULL),
-(206, 14, 64, 'selected', CURRENT_TIMESTAMP, NULL),
-(207, 14, 66, 'selected', CURRENT_TIMESTAMP, NULL),
-(208, 14, 68, 'selected', CURRENT_TIMESTAMP, NULL),
-(209, 14, 70, 'selected', CURRENT_TIMESTAMP, NULL),
-(210, 14, 62, 'selected', CURRENT_TIMESTAMP, NULL),
-(211, 15, 35, 'selected', CURRENT_TIMESTAMP, NULL),
-(212, 15, 39, 'selected', CURRENT_TIMESTAMP, NULL),
-(213, 15, 24, 'selected', CURRENT_TIMESTAMP, NULL),
-(214, 15, 28, 'selected', CURRENT_TIMESTAMP, NULL),
-(215, 15, 32, 'selected', CURRENT_TIMESTAMP, NULL),
-(216, 15, 55, 'selected', CURRENT_TIMESTAMP, NULL),
-(217, 15, 57, 'selected', CURRENT_TIMESTAMP, NULL),
-(218, 15, 59, 'selected', CURRENT_TIMESTAMP, NULL),
-(219, 15, 51, 'selected', CURRENT_TIMESTAMP, NULL),
-(220, 15, 53, 'selected', CURRENT_TIMESTAMP, NULL),
-(221, 15, 65, 'selected', CURRENT_TIMESTAMP, NULL),
-(222, 15, 67, 'selected', CURRENT_TIMESTAMP, NULL),
-(223, 15, 69, 'selected', CURRENT_TIMESTAMP, NULL),
-(224, 15, 61, 'selected', CURRENT_TIMESTAMP, NULL),
-(225, 15, 63, 'selected', CURRENT_TIMESTAMP, NULL),
-(226, 16, 36, 'selected', CURRENT_TIMESTAMP, NULL),
-(227, 16, 21, 'selected', CURRENT_TIMESTAMP, NULL),
-(228, 16, 25, 'selected', CURRENT_TIMESTAMP, NULL),
-(229, 16, 29, 'selected', CURRENT_TIMESTAMP, NULL),
-(230, 16, 33, 'selected', CURRENT_TIMESTAMP, NULL),
-(231, 16, 56, 'selected', CURRENT_TIMESTAMP, NULL),
-(232, 16, 58, 'selected', CURRENT_TIMESTAMP, NULL),
-(233, 16, 60, 'selected', CURRENT_TIMESTAMP, NULL),
-(234, 16, 52, 'selected', CURRENT_TIMESTAMP, NULL),
-(235, 16, 54, 'selected', CURRENT_TIMESTAMP, NULL),
-(236, 16, 66, 'selected', CURRENT_TIMESTAMP, NULL),
-(237, 16, 68, 'selected', CURRENT_TIMESTAMP, NULL),
-(238, 16, 70, 'selected', CURRENT_TIMESTAMP, NULL),
-(239, 16, 62, 'selected', CURRENT_TIMESTAMP, NULL),
-(240, 16, 64, 'selected', CURRENT_TIMESTAMP, NULL);
+INSERT INTO enrollments(id, student_id, offering_id, status) VALUES
+(181, 13, 33, 'selected'),
+(182, 13, 37, 'selected'),
+(183, 13, 22, 'selected'),
+(184, 13, 26, 'selected'),
+(185, 13, 30, 'selected'),
+(186, 13, 53, 'selected'),
+(187, 13, 55, 'selected'),
+(188, 13, 57, 'selected'),
+(189, 13, 59, 'selected'),
+(190, 13, 51, 'selected'),
+(191, 13, 63, 'selected'),
+(192, 13, 65, 'selected'),
+(193, 13, 67, 'selected'),
+(194, 13, 69, 'selected'),
+(195, 13, 61, 'selected'),
+(196, 14, 34, 'selected'),
+(197, 14, 38, 'selected'),
+(198, 14, 23, 'selected'),
+(199, 14, 27, 'selected'),
+(200, 14, 31, 'selected'),
+(201, 14, 54, 'selected'),
+(202, 14, 56, 'selected'),
+(203, 14, 58, 'selected'),
+(204, 14, 60, 'selected'),
+(205, 14, 52, 'selected'),
+(206, 14, 64, 'selected'),
+(207, 14, 66, 'selected'),
+(208, 14, 68, 'selected'),
+(209, 14, 70, 'selected'),
+(210, 14, 62, 'selected'),
+(211, 15, 35, 'selected'),
+(212, 15, 39, 'selected'),
+(213, 15, 24, 'selected'),
+(214, 15, 28, 'selected'),
+(215, 15, 32, 'selected'),
+(216, 15, 55, 'selected'),
+(217, 15, 57, 'selected'),
+(218, 15, 59, 'selected'),
+(219, 15, 51, 'selected'),
+(220, 15, 53, 'selected'),
+(221, 15, 65, 'selected'),
+(222, 15, 67, 'selected'),
+(223, 15, 69, 'selected'),
+(224, 15, 61, 'selected'),
+(225, 15, 63, 'selected'),
+(226, 16, 36, 'selected'),
+(227, 16, 21, 'selected'),
+(228, 16, 25, 'selected'),
+(229, 16, 29, 'selected'),
+(230, 16, 33, 'selected'),
+(231, 16, 56, 'selected'),
+(232, 16, 58, 'selected'),
+(233, 16, 60, 'selected'),
+(234, 16, 52, 'selected'),
+(235, 16, 54, 'selected'),
+(236, 16, 66, 'selected'),
+(237, 16, 68, 'selected'),
+(238, 16, 70, 'selected'),
+(239, 16, 62, 'selected'),
+(240, 16, 64, 'selected');
 
-INSERT INTO enrollments(id, student_id, offering_id, status, selected_at, dropped_at) VALUES
-(241, 17, 37, 'selected', CURRENT_TIMESTAMP, NULL),
-(242, 17, 22, 'selected', CURRENT_TIMESTAMP, NULL),
-(243, 17, 26, 'selected', CURRENT_TIMESTAMP, NULL),
-(244, 17, 30, 'selected', CURRENT_TIMESTAMP, NULL),
-(245, 17, 34, 'selected', CURRENT_TIMESTAMP, NULL),
-(246, 17, 57, 'selected', CURRENT_TIMESTAMP, NULL),
-(247, 17, 59, 'selected', CURRENT_TIMESTAMP, NULL),
-(248, 17, 51, 'selected', CURRENT_TIMESTAMP, NULL),
-(249, 17, 53, 'selected', CURRENT_TIMESTAMP, NULL),
-(250, 17, 55, 'selected', CURRENT_TIMESTAMP, NULL),
-(251, 17, 67, 'selected', CURRENT_TIMESTAMP, NULL),
-(252, 17, 69, 'selected', CURRENT_TIMESTAMP, NULL),
-(253, 17, 61, 'selected', CURRENT_TIMESTAMP, NULL),
-(254, 17, 63, 'selected', CURRENT_TIMESTAMP, NULL),
-(255, 17, 65, 'selected', CURRENT_TIMESTAMP, NULL),
-(256, 18, 38, 'selected', CURRENT_TIMESTAMP, NULL),
-(257, 18, 23, 'selected', CURRENT_TIMESTAMP, NULL),
-(258, 18, 27, 'selected', CURRENT_TIMESTAMP, NULL),
-(259, 18, 31, 'selected', CURRENT_TIMESTAMP, NULL),
-(260, 18, 35, 'selected', CURRENT_TIMESTAMP, NULL),
-(261, 18, 58, 'selected', CURRENT_TIMESTAMP, NULL),
-(262, 18, 60, 'selected', CURRENT_TIMESTAMP, NULL),
-(263, 18, 52, 'selected', CURRENT_TIMESTAMP, NULL),
-(264, 18, 54, 'selected', CURRENT_TIMESTAMP, NULL),
-(265, 18, 56, 'selected', CURRENT_TIMESTAMP, NULL),
-(266, 18, 68, 'selected', CURRENT_TIMESTAMP, NULL),
-(267, 18, 70, 'selected', CURRENT_TIMESTAMP, NULL),
-(268, 18, 62, 'selected', CURRENT_TIMESTAMP, NULL),
-(269, 18, 64, 'selected', CURRENT_TIMESTAMP, NULL),
-(270, 18, 66, 'selected', CURRENT_TIMESTAMP, NULL),
-(271, 19, 39, 'selected', CURRENT_TIMESTAMP, NULL),
-(272, 19, 24, 'selected', CURRENT_TIMESTAMP, NULL),
-(273, 19, 28, 'selected', CURRENT_TIMESTAMP, NULL),
-(274, 19, 32, 'selected', CURRENT_TIMESTAMP, NULL),
-(275, 19, 36, 'selected', CURRENT_TIMESTAMP, NULL),
-(276, 19, 59, 'selected', CURRENT_TIMESTAMP, NULL),
-(277, 19, 51, 'selected', CURRENT_TIMESTAMP, NULL),
-(278, 19, 53, 'selected', CURRENT_TIMESTAMP, NULL),
-(279, 19, 55, 'selected', CURRENT_TIMESTAMP, NULL),
-(280, 19, 57, 'selected', CURRENT_TIMESTAMP, NULL),
-(281, 19, 69, 'selected', CURRENT_TIMESTAMP, NULL),
-(282, 19, 61, 'selected', CURRENT_TIMESTAMP, NULL),
-(283, 19, 63, 'selected', CURRENT_TIMESTAMP, NULL),
-(284, 19, 65, 'selected', CURRENT_TIMESTAMP, NULL),
-(285, 19, 67, 'selected', CURRENT_TIMESTAMP, NULL),
-(286, 20, 21, 'selected', CURRENT_TIMESTAMP, NULL),
-(287, 20, 25, 'selected', CURRENT_TIMESTAMP, NULL),
-(288, 20, 29, 'selected', CURRENT_TIMESTAMP, NULL),
-(289, 20, 33, 'selected', CURRENT_TIMESTAMP, NULL),
-(290, 20, 37, 'selected', CURRENT_TIMESTAMP, NULL),
-(291, 20, 60, 'selected', CURRENT_TIMESTAMP, NULL),
-(292, 20, 52, 'selected', CURRENT_TIMESTAMP, NULL),
-(293, 20, 54, 'selected', CURRENT_TIMESTAMP, NULL),
-(294, 20, 56, 'selected', CURRENT_TIMESTAMP, NULL),
-(295, 20, 58, 'selected', CURRENT_TIMESTAMP, NULL),
-(296, 20, 70, 'selected', CURRENT_TIMESTAMP, NULL),
-(297, 20, 62, 'selected', CURRENT_TIMESTAMP, NULL),
-(298, 20, 64, 'selected', CURRENT_TIMESTAMP, NULL),
-(299, 20, 66, 'selected', CURRENT_TIMESTAMP, NULL),
-(300, 20, 68, 'selected', CURRENT_TIMESTAMP, NULL);
+INSERT INTO enrollments(id, student_id, offering_id, status) VALUES
+(241, 17, 37, 'selected'),
+(242, 17, 22, 'selected'),
+(243, 17, 26, 'selected'),
+(244, 17, 30, 'selected'),
+(245, 17, 34, 'selected'),
+(246, 17, 57, 'selected'),
+(247, 17, 59, 'selected'),
+(248, 17, 51, 'selected'),
+(249, 17, 53, 'selected'),
+(250, 17, 55, 'selected'),
+(251, 17, 67, 'selected'),
+(252, 17, 69, 'selected'),
+(253, 17, 61, 'selected'),
+(254, 17, 63, 'selected'),
+(255, 17, 65, 'selected'),
+(256, 18, 38, 'selected'),
+(257, 18, 23, 'selected'),
+(258, 18, 27, 'selected'),
+(259, 18, 31, 'selected'),
+(260, 18, 35, 'selected'),
+(261, 18, 58, 'selected'),
+(262, 18, 60, 'selected'),
+(263, 18, 52, 'selected'),
+(264, 18, 54, 'selected'),
+(265, 18, 56, 'selected'),
+(266, 18, 68, 'selected'),
+(267, 18, 70, 'selected'),
+(268, 18, 62, 'selected'),
+(269, 18, 64, 'selected'),
+(270, 18, 66, 'selected'),
+(271, 19, 39, 'selected'),
+(272, 19, 24, 'selected'),
+(273, 19, 28, 'selected'),
+(274, 19, 32, 'selected'),
+(275, 19, 36, 'selected'),
+(276, 19, 59, 'selected'),
+(277, 19, 51, 'selected'),
+(278, 19, 53, 'selected'),
+(279, 19, 55, 'selected'),
+(280, 19, 57, 'selected'),
+(281, 19, 69, 'selected'),
+(282, 19, 61, 'selected'),
+(283, 19, 63, 'selected'),
+(284, 19, 65, 'selected'),
+(285, 19, 67, 'selected'),
+(286, 20, 21, 'selected'),
+(287, 20, 25, 'selected'),
+(288, 20, 29, 'selected'),
+(289, 20, 33, 'selected'),
+(290, 20, 37, 'selected'),
+(291, 20, 60, 'selected'),
+(292, 20, 52, 'selected'),
+(293, 20, 54, 'selected'),
+(294, 20, 56, 'selected'),
+(295, 20, 58, 'selected'),
+(296, 20, 70, 'selected'),
+(297, 20, 62, 'selected'),
+(298, 20, 64, 'selected'),
+(299, 20, 66, 'selected'),
+(300, 20, 68, 'selected');
 
-INSERT INTO grades(id, enrollment_id, usual_score, exam_score, final_score, grade_point, updated_by, updated_at) VALUES
-(1, 6, 64.00, 81.00, 74.20, 2.30, 8, CURRENT_TIMESTAMP),
-(2, 7, 71.00, 92.00, 83.60, 3.30, 9, CURRENT_TIMESTAMP),
-(3, 8, 78.00, 63.00, 69.00, 2.00, 10, CURRENT_TIMESTAMP),
-(4, 9, 85.00, 74.00, 79.50, 3.00, 11, CURRENT_TIMESTAMP),
-(5, 10, 92.00, 85.00, 87.80, 3.70, 2, CURRENT_TIMESTAMP),
-(6, 11, 61.00, 56.00, 58.00, 0.00, 3, CURRENT_TIMESTAMP),
-(7, 12, 68.00, 67.00, 67.40, 1.70, 4, CURRENT_TIMESTAMP),
-(8, 13, 75.00, 78.00, 76.80, 2.70, 5, CURRENT_TIMESTAMP),
-(9, 14, 82.00, 89.00, 85.50, 3.70, 6, CURRENT_TIMESTAMP),
-(10, 15, 89.00, 60.00, 71.60, 2.00, 7, CURRENT_TIMESTAMP),
-(11, 21, 93.00, 86.00, 88.80, 3.70, 3, CURRENT_TIMESTAMP),
-(12, 22, 62.00, 57.00, 60.00, 1.00, 4, CURRENT_TIMESTAMP),
-(13, 23, 69.00, 68.00, 68.30, 2.00, 5, CURRENT_TIMESTAMP),
-(14, 24, 76.00, 79.00, 76.90, 2.70, 6, CURRENT_TIMESTAMP),
-(15, 25, 83.00, 90.00, 86.50, 3.70, 7, CURRENT_TIMESTAMP),
-(16, 26, 90.00, 61.00, 69.70, 2.00, 8, CURRENT_TIMESTAMP),
-(17, 27, 97.00, 72.00, 84.50, 3.30, 9, CURRENT_TIMESTAMP),
-(18, 28, 66.00, 83.00, 77.90, 2.70, 10, CURRENT_TIMESTAMP),
-(19, 29, 73.00, 94.00, 79.30, 3.00, 11, CURRENT_TIMESTAMP),
-(20, 30, 80.00, 65.00, 72.50, 2.30, 2, CURRENT_TIMESTAMP),
-(21, 36, 84.00, 91.00, 88.20, 3.70, 8, CURRENT_TIMESTAMP),
-(22, 37, 91.00, 62.00, 73.60, 2.30, 9, CURRENT_TIMESTAMP),
-(23, 38, 60.00, 73.00, 66.50, 1.70, 10, CURRENT_TIMESTAMP),
-(24, 39, 67.00, 84.00, 77.20, 2.70, 11, CURRENT_TIMESTAMP),
-(25, 40, 74.00, 55.00, 62.60, 1.00, 2, CURRENT_TIMESTAMP),
-(26, 41, 81.00, 66.00, 72.00, 2.30, 3, CURRENT_TIMESTAMP),
-(27, 42, 88.00, 77.00, 81.40, 3.00, 4, CURRENT_TIMESTAMP),
-(28, 43, 95.00, 88.00, 91.50, 4.00, 5, CURRENT_TIMESTAMP),
-(29, 44, 64.00, 59.00, 61.00, 1.00, 6, CURRENT_TIMESTAMP),
-(30, 45, 71.00, 70.00, 70.40, 2.00, 7, CURRENT_TIMESTAMP),
-(31, 51, 75.00, 56.00, 67.40, 1.70, 3, CURRENT_TIMESTAMP),
-(32, 52, 82.00, 67.00, 71.50, 2.00, 4, CURRENT_TIMESTAMP),
-(33, 53, 89.00, 78.00, 85.70, 3.70, 5, CURRENT_TIMESTAMP),
-(34, 54, 96.00, 89.00, 92.50, 4.00, 6, CURRENT_TIMESTAMP),
-(35, 55, 65.00, 60.00, 62.00, 1.00, 7, CURRENT_TIMESTAMP),
-(36, 56, 72.00, 71.00, 71.50, 2.00, 8, CURRENT_TIMESTAMP),
-(37, 57, 79.00, 82.00, 81.10, 3.00, 9, CURRENT_TIMESTAMP),
-(38, 58, 86.00, 93.00, 88.10, 3.70, 10, CURRENT_TIMESTAMP),
-(39, 59, 93.00, 64.00, 78.50, 3.00, 11, CURRENT_TIMESTAMP),
-(40, 60, 62.00, 75.00, 71.10, 2.00, 2, CURRENT_TIMESTAMP),
-(41, 66, 66.00, 61.00, 63.00, 1.00, 8, CURRENT_TIMESTAMP),
-(42, 67, 73.00, 72.00, 72.50, 2.30, 9, CURRENT_TIMESTAMP),
-(43, 68, 80.00, 83.00, 81.80, 3.00, 10, CURRENT_TIMESTAMP),
-(44, 69, 87.00, 94.00, 91.20, 4.00, 11, CURRENT_TIMESTAMP),
-(45, 70, 94.00, 65.00, 76.60, 2.70, 2, CURRENT_TIMESTAMP),
-(46, 71, 63.00, 76.00, 70.80, 2.00, 3, CURRENT_TIMESTAMP),
-(47, 72, 70.00, 87.00, 78.50, 3.00, 4, CURRENT_TIMESTAMP),
-(48, 73, 77.00, 58.00, 65.60, 1.50, 5, CURRENT_TIMESTAMP),
-(49, 74, 84.00, 69.00, 75.00, 2.70, 6, CURRENT_TIMESTAMP),
-(50, 75, 91.00, 80.00, 84.40, 3.30, 7, CURRENT_TIMESTAMP),
-(51, 81, 95.00, 66.00, 74.70, 2.30, 3, CURRENT_TIMESTAMP),
-(52, 82, 64.00, 77.00, 67.90, 1.70, 4, CURRENT_TIMESTAMP),
-(53, 83, 71.00, 88.00, 79.50, 3.00, 5, CURRENT_TIMESTAMP),
-(54, 84, 78.00, 59.00, 66.60, 1.70, 6, CURRENT_TIMESTAMP),
-(55, 85, 85.00, 70.00, 79.00, 3.00, 7, CURRENT_TIMESTAMP),
-(56, 86, 92.00, 81.00, 84.30, 3.30, 8, CURRENT_TIMESTAMP),
-(57, 87, 61.00, 92.00, 70.30, 2.00, 9, CURRENT_TIMESTAMP),
-(58, 88, 68.00, 63.00, 65.50, 1.50, 10, CURRENT_TIMESTAMP),
-(59, 89, 75.00, 74.00, 74.30, 2.30, 11, CURRENT_TIMESTAMP),
-(60, 90, 82.00, 85.00, 83.50, 3.30, 2, CURRENT_TIMESTAMP);
+INSERT INTO grades(id, enrollment_id, usual_score, exam_score, updated_by, updated_at) VALUES
+(1, 6, 64.00, 81.00, 8, CURRENT_TIMESTAMP),
+(2, 7, 71.00, 92.00, 9, CURRENT_TIMESTAMP),
+(3, 8, 78.00, 63.00, 10, CURRENT_TIMESTAMP),
+(4, 9, 85.00, 74.00, 11, CURRENT_TIMESTAMP),
+(5, 10, 92.00, 85.00, 2, CURRENT_TIMESTAMP),
+(6, 11, 61.00, 56.00, 3, CURRENT_TIMESTAMP),
+(7, 12, 68.00, 67.00, 4, CURRENT_TIMESTAMP),
+(8, 13, 75.00, 78.00, 5, CURRENT_TIMESTAMP),
+(9, 14, 82.00, 89.00, 6, CURRENT_TIMESTAMP),
+(10, 15, 89.00, 60.00, 7, CURRENT_TIMESTAMP),
+(11, 21, 93.00, 86.00, 3, CURRENT_TIMESTAMP),
+(12, 22, 62.00, 57.00, 4, CURRENT_TIMESTAMP),
+(13, 23, 69.00, 68.00, 5, CURRENT_TIMESTAMP),
+(14, 24, 76.00, 79.00, 6, CURRENT_TIMESTAMP),
+(15, 25, 83.00, 90.00, 7, CURRENT_TIMESTAMP),
+(16, 26, 90.00, 61.00, 8, CURRENT_TIMESTAMP),
+(17, 27, 97.00, 72.00, 9, CURRENT_TIMESTAMP),
+(18, 28, 66.00, 83.00, 10, CURRENT_TIMESTAMP),
+(19, 29, 73.00, 94.00, 11, CURRENT_TIMESTAMP),
+(20, 30, 80.00, 65.00, 2, CURRENT_TIMESTAMP),
+(21, 36, 84.00, 91.00, 8, CURRENT_TIMESTAMP),
+(22, 37, 91.00, 62.00, 9, CURRENT_TIMESTAMP),
+(23, 38, 60.00, 73.00, 10, CURRENT_TIMESTAMP),
+(24, 39, 67.00, 84.00, 11, CURRENT_TIMESTAMP),
+(25, 40, 74.00, 55.00, 2, CURRENT_TIMESTAMP),
+(26, 41, 81.00, 66.00, 3, CURRENT_TIMESTAMP),
+(27, 42, 88.00, 77.00, 4, CURRENT_TIMESTAMP),
+(28, 43, 95.00, 88.00, 5, CURRENT_TIMESTAMP),
+(29, 44, 64.00, 59.00, 6, CURRENT_TIMESTAMP),
+(30, 45, 71.00, 70.00, 7, CURRENT_TIMESTAMP),
+(31, 51, 75.00, 56.00, 3, CURRENT_TIMESTAMP),
+(32, 52, 82.00, 67.00, 4, CURRENT_TIMESTAMP),
+(33, 53, 89.00, 78.00, 5, CURRENT_TIMESTAMP),
+(34, 54, 96.00, 89.00, 6, CURRENT_TIMESTAMP),
+(35, 55, 65.00, 60.00, 7, CURRENT_TIMESTAMP),
+(36, 56, 72.00, 71.00, 8, CURRENT_TIMESTAMP),
+(37, 57, 79.00, 82.00, 9, CURRENT_TIMESTAMP),
+(38, 58, 86.00, 93.00, 10, CURRENT_TIMESTAMP),
+(39, 59, 93.00, 64.00, 11, CURRENT_TIMESTAMP),
+(40, 60, 62.00, 75.00, 2, CURRENT_TIMESTAMP),
+(41, 66, 66.00, 61.00, 8, CURRENT_TIMESTAMP),
+(42, 67, 73.00, 72.00, 9, CURRENT_TIMESTAMP),
+(43, 68, 80.00, 83.00, 10, CURRENT_TIMESTAMP),
+(44, 69, 87.00, 94.00, 11, CURRENT_TIMESTAMP),
+(45, 70, 94.00, 65.00, 2, CURRENT_TIMESTAMP),
+(46, 71, 63.00, 76.00, 3, CURRENT_TIMESTAMP),
+(47, 72, 70.00, 87.00, 4, CURRENT_TIMESTAMP),
+(48, 73, 77.00, 58.00, 5, CURRENT_TIMESTAMP),
+(49, 74, 84.00, 69.00, 6, CURRENT_TIMESTAMP),
+(50, 75, 91.00, 80.00, 7, CURRENT_TIMESTAMP),
+(51, 81, 95.00, 66.00, 3, CURRENT_TIMESTAMP),
+(52, 82, 64.00, 77.00, 4, CURRENT_TIMESTAMP),
+(53, 83, 71.00, 88.00, 5, CURRENT_TIMESTAMP),
+(54, 84, 78.00, 59.00, 6, CURRENT_TIMESTAMP),
+(55, 85, 85.00, 70.00, 7, CURRENT_TIMESTAMP),
+(56, 86, 92.00, 81.00, 8, CURRENT_TIMESTAMP),
+(57, 87, 61.00, 92.00, 9, CURRENT_TIMESTAMP),
+(58, 88, 68.00, 63.00, 10, CURRENT_TIMESTAMP),
+(59, 89, 75.00, 74.00, 11, CURRENT_TIMESTAMP),
+(60, 90, 82.00, 85.00, 2, CURRENT_TIMESTAMP);
 
-INSERT INTO grades(id, enrollment_id, usual_score, exam_score, final_score, grade_point, updated_by, updated_at) VALUES
-(61, 96, 86.00, 71.00, 78.50, 3.00, 8, CURRENT_TIMESTAMP),
-(62, 97, 93.00, 82.00, 86.40, 3.70, 9, CURRENT_TIMESTAMP),
-(63, 98, 62.00, 93.00, 80.60, 3.00, 10, CURRENT_TIMESTAMP),
-(64, 99, 69.00, 64.00, 66.00, 1.70, 11, CURRENT_TIMESTAMP),
-(65, 100, 76.00, 75.00, 75.40, 2.70, 2, CURRENT_TIMESTAMP),
-(66, 101, 83.00, 86.00, 84.50, 3.30, 3, CURRENT_TIMESTAMP),
-(67, 102, 90.00, 57.00, 70.20, 2.00, 4, CURRENT_TIMESTAMP),
-(68, 103, 97.00, 68.00, 79.60, 3.00, 5, CURRENT_TIMESTAMP),
-(69, 104, 66.00, 79.00, 73.80, 2.30, 6, CURRENT_TIMESTAMP),
-(70, 105, 73.00, 90.00, 83.20, 3.30, 7, CURRENT_TIMESTAMP),
-(71, 111, 77.00, 76.00, 76.70, 2.70, 3, CURRENT_TIMESTAMP),
-(72, 112, 84.00, 87.00, 85.50, 3.70, 4, CURRENT_TIMESTAMP),
-(73, 113, 91.00, 58.00, 71.20, 2.00, 5, CURRENT_TIMESTAMP),
-(74, 114, 60.00, 69.00, 63.60, 1.00, 6, CURRENT_TIMESTAMP),
-(75, 115, 67.00, 80.00, 76.10, 2.70, 7, CURRENT_TIMESTAMP),
-(76, 116, 74.00, 91.00, 79.10, 3.00, 8, CURRENT_TIMESTAMP),
-(77, 117, 81.00, 62.00, 71.50, 2.00, 9, CURRENT_TIMESTAMP),
-(78, 118, 88.00, 73.00, 77.50, 2.70, 10, CURRENT_TIMESTAMP),
-(79, 119, 95.00, 84.00, 89.50, 3.70, 11, CURRENT_TIMESTAMP),
-(80, 120, 64.00, 55.00, 57.70, 0.00, 2, CURRENT_TIMESTAMP),
-(81, 126, 68.00, 81.00, 75.80, 2.70, 8, CURRENT_TIMESTAMP),
-(82, 127, 75.00, 92.00, 85.20, 3.70, 9, CURRENT_TIMESTAMP),
-(83, 128, 82.00, 63.00, 70.60, 2.00, 10, CURRENT_TIMESTAMP),
-(84, 129, 89.00, 74.00, 80.00, 3.00, 11, CURRENT_TIMESTAMP),
-(85, 130, 96.00, 85.00, 90.50, 4.00, 2, CURRENT_TIMESTAMP),
-(86, 131, 65.00, 56.00, 59.60, 0.00, 3, CURRENT_TIMESTAMP),
-(87, 132, 72.00, 67.00, 69.00, 2.00, 4, CURRENT_TIMESTAMP),
-(88, 133, 79.00, 78.00, 78.40, 3.00, 5, CURRENT_TIMESTAMP),
-(89, 134, 86.00, 89.00, 87.80, 3.70, 6, CURRENT_TIMESTAMP),
-(90, 135, 93.00, 60.00, 76.50, 2.70, 7, CURRENT_TIMESTAMP),
-(91, 141, 97.00, 86.00, 91.50, 4.00, 3, CURRENT_TIMESTAMP),
-(92, 142, 66.00, 57.00, 60.60, 1.00, 4, CURRENT_TIMESTAMP),
-(93, 143, 73.00, 68.00, 71.00, 2.00, 5, CURRENT_TIMESTAMP),
-(94, 144, 80.00, 79.00, 79.30, 3.00, 6, CURRENT_TIMESTAMP),
-(95, 145, 87.00, 90.00, 87.90, 3.70, 7, CURRENT_TIMESTAMP),
-(96, 146, 94.00, 61.00, 77.50, 2.70, 8, CURRENT_TIMESTAMP),
-(97, 147, 63.00, 72.00, 69.30, 2.00, 9, CURRENT_TIMESTAMP),
-(98, 148, 70.00, 83.00, 76.50, 2.70, 10, CURRENT_TIMESTAMP),
-(99, 149, 77.00, 94.00, 88.90, 3.70, 11, CURRENT_TIMESTAMP),
-(100, 150, 84.00, 65.00, 78.30, 3.00, 2, CURRENT_TIMESTAMP),
-(101, 156, 88.00, 91.00, 89.80, 3.70, 8, CURRENT_TIMESTAMP),
-(102, 157, 95.00, 62.00, 75.20, 2.70, 9, CURRENT_TIMESTAMP),
-(103, 158, 64.00, 73.00, 69.40, 2.00, 10, CURRENT_TIMESTAMP),
-(104, 159, 71.00, 84.00, 77.50, 2.70, 11, CURRENT_TIMESTAMP),
-(105, 160, 78.00, 55.00, 64.20, 1.50, 2, CURRENT_TIMESTAMP),
-(106, 161, 85.00, 66.00, 73.60, 2.30, 3, CURRENT_TIMESTAMP),
-(107, 162, 92.00, 77.00, 83.00, 3.30, 4, CURRENT_TIMESTAMP),
-(108, 163, 61.00, 88.00, 77.20, 2.70, 5, CURRENT_TIMESTAMP),
-(109, 164, 68.00, 59.00, 63.50, 1.00, 6, CURRENT_TIMESTAMP),
-(110, 165, 75.00, 70.00, 72.00, 2.30, 7, CURRENT_TIMESTAMP),
-(111, 171, 79.00, 56.00, 65.20, 1.50, 3, CURRENT_TIMESTAMP),
-(112, 172, 86.00, 67.00, 78.40, 3.00, 4, CURRENT_TIMESTAMP),
-(113, 173, 93.00, 78.00, 82.50, 3.30, 5, CURRENT_TIMESTAMP),
-(114, 174, 62.00, 89.00, 70.10, 2.00, 6, CURRENT_TIMESTAMP),
-(115, 175, 69.00, 60.00, 64.50, 1.50, 7, CURRENT_TIMESTAMP),
-(116, 176, 76.00, 71.00, 72.50, 2.30, 8, CURRENT_TIMESTAMP),
-(117, 177, 83.00, 82.00, 82.50, 3.30, 9, CURRENT_TIMESTAMP),
-(118, 178, 90.00, 93.00, 92.10, 4.00, 10, CURRENT_TIMESTAMP),
-(119, 179, 97.00, 64.00, 87.10, 3.70, 11, CURRENT_TIMESTAMP),
-(120, 180, 66.00, 75.00, 70.50, 2.00, 2, CURRENT_TIMESTAMP);
+INSERT INTO grades(id, enrollment_id, usual_score, exam_score, updated_by, updated_at) VALUES
+(61, 96, 86.00, 71.00, 8, CURRENT_TIMESTAMP),
+(62, 97, 93.00, 82.00, 9, CURRENT_TIMESTAMP),
+(63, 98, 62.00, 93.00, 10, CURRENT_TIMESTAMP),
+(64, 99, 69.00, 64.00, 11, CURRENT_TIMESTAMP),
+(65, 100, 76.00, 75.00, 2, CURRENT_TIMESTAMP),
+(66, 101, 83.00, 86.00, 3, CURRENT_TIMESTAMP),
+(67, 102, 90.00, 57.00, 4, CURRENT_TIMESTAMP),
+(68, 103, 97.00, 68.00, 5, CURRENT_TIMESTAMP),
+(69, 104, 66.00, 79.00, 6, CURRENT_TIMESTAMP),
+(70, 105, 73.00, 90.00, 7, CURRENT_TIMESTAMP),
+(71, 111, 77.00, 76.00, 3, CURRENT_TIMESTAMP),
+(72, 112, 84.00, 87.00, 4, CURRENT_TIMESTAMP),
+(73, 113, 91.00, 58.00, 5, CURRENT_TIMESTAMP),
+(74, 114, 60.00, 69.00, 6, CURRENT_TIMESTAMP),
+(75, 115, 67.00, 80.00, 7, CURRENT_TIMESTAMP),
+(76, 116, 74.00, 91.00, 8, CURRENT_TIMESTAMP),
+(77, 117, 81.00, 62.00, 9, CURRENT_TIMESTAMP),
+(78, 118, 88.00, 73.00, 10, CURRENT_TIMESTAMP),
+(79, 119, 95.00, 84.00, 11, CURRENT_TIMESTAMP),
+(80, 120, 64.00, 55.00, 2, CURRENT_TIMESTAMP),
+(81, 126, 68.00, 81.00, 8, CURRENT_TIMESTAMP),
+(82, 127, 75.00, 92.00, 9, CURRENT_TIMESTAMP),
+(83, 128, 82.00, 63.00, 10, CURRENT_TIMESTAMP),
+(84, 129, 89.00, 74.00, 11, CURRENT_TIMESTAMP),
+(85, 130, 96.00, 85.00, 2, CURRENT_TIMESTAMP),
+(86, 131, 65.00, 56.00, 3, CURRENT_TIMESTAMP),
+(87, 132, 72.00, 67.00, 4, CURRENT_TIMESTAMP),
+(88, 133, 79.00, 78.00, 5, CURRENT_TIMESTAMP),
+(89, 134, 86.00, 89.00, 6, CURRENT_TIMESTAMP),
+(90, 135, 93.00, 60.00, 7, CURRENT_TIMESTAMP),
+(91, 141, 97.00, 86.00, 3, CURRENT_TIMESTAMP),
+(92, 142, 66.00, 57.00, 4, CURRENT_TIMESTAMP),
+(93, 143, 73.00, 68.00, 5, CURRENT_TIMESTAMP),
+(94, 144, 80.00, 79.00, 6, CURRENT_TIMESTAMP),
+(95, 145, 87.00, 90.00, 7, CURRENT_TIMESTAMP),
+(96, 146, 94.00, 61.00, 8, CURRENT_TIMESTAMP),
+(97, 147, 63.00, 72.00, 9, CURRENT_TIMESTAMP),
+(98, 148, 70.00, 83.00, 10, CURRENT_TIMESTAMP),
+(99, 149, 77.00, 94.00, 11, CURRENT_TIMESTAMP),
+(100, 150, 84.00, 65.00, 2, CURRENT_TIMESTAMP),
+(101, 156, 88.00, 91.00, 8, CURRENT_TIMESTAMP),
+(102, 157, 95.00, 62.00, 9, CURRENT_TIMESTAMP),
+(103, 158, 64.00, 73.00, 10, CURRENT_TIMESTAMP),
+(104, 159, 71.00, 84.00, 11, CURRENT_TIMESTAMP),
+(105, 160, 78.00, 55.00, 2, CURRENT_TIMESTAMP),
+(106, 161, 85.00, 66.00, 3, CURRENT_TIMESTAMP),
+(107, 162, 92.00, 77.00, 4, CURRENT_TIMESTAMP),
+(108, 163, 61.00, 88.00, 5, CURRENT_TIMESTAMP),
+(109, 164, 68.00, 59.00, 6, CURRENT_TIMESTAMP),
+(110, 165, 75.00, 70.00, 7, CURRENT_TIMESTAMP),
+(111, 171, 79.00, 56.00, 3, CURRENT_TIMESTAMP),
+(112, 172, 86.00, 67.00, 4, CURRENT_TIMESTAMP),
+(113, 173, 93.00, 78.00, 5, CURRENT_TIMESTAMP),
+(114, 174, 62.00, 89.00, 6, CURRENT_TIMESTAMP),
+(115, 175, 69.00, 60.00, 7, CURRENT_TIMESTAMP),
+(116, 176, 76.00, 71.00, 8, CURRENT_TIMESTAMP),
+(117, 177, 83.00, 82.00, 9, CURRENT_TIMESTAMP),
+(118, 178, 90.00, 93.00, 10, CURRENT_TIMESTAMP),
+(119, 179, 97.00, 64.00, 11, CURRENT_TIMESTAMP),
+(120, 180, 66.00, 75.00, 2, CURRENT_TIMESTAMP);
 
-INSERT INTO grades(id, enrollment_id, usual_score, exam_score, final_score, grade_point, updated_by, updated_at) VALUES
-(121, 186, 70.00, 61.00, 64.60, 1.50, 8, CURRENT_TIMESTAMP),
-(122, 187, 77.00, 72.00, 74.00, 2.30, 9, CURRENT_TIMESTAMP),
-(123, 188, 84.00, 83.00, 83.50, 3.30, 10, CURRENT_TIMESTAMP),
-(124, 189, 91.00, 94.00, 92.80, 4.00, 11, CURRENT_TIMESTAMP),
-(125, 190, 60.00, 65.00, 63.00, 1.00, 2, CURRENT_TIMESTAMP),
-(126, 191, 67.00, 76.00, 72.40, 2.30, 3, CURRENT_TIMESTAMP),
-(127, 192, 74.00, 87.00, 81.80, 3.00, 4, CURRENT_TIMESTAMP),
-(128, 193, 81.00, 58.00, 69.50, 2.00, 5, CURRENT_TIMESTAMP),
-(129, 194, 88.00, 69.00, 76.60, 2.70, 6, CURRENT_TIMESTAMP),
-(130, 195, 95.00, 80.00, 86.00, 3.70, 7, CURRENT_TIMESTAMP),
-(131, 201, 61.00, 66.00, 63.00, 1.00, 3, CURRENT_TIMESTAMP),
-(132, 202, 68.00, 77.00, 74.30, 2.30, 4, CURRENT_TIMESTAMP),
-(133, 203, 75.00, 88.00, 78.90, 3.00, 5, CURRENT_TIMESTAMP),
-(134, 204, 82.00, 59.00, 70.50, 2.00, 6, CURRENT_TIMESTAMP),
-(135, 205, 89.00, 70.00, 77.60, 2.70, 7, CURRENT_TIMESTAMP),
-(136, 206, 96.00, 81.00, 88.50, 3.70, 8, CURRENT_TIMESTAMP),
-(137, 207, 65.00, 92.00, 83.90, 3.30, 9, CURRENT_TIMESTAMP),
-(138, 208, 72.00, 63.00, 69.30, 2.00, 10, CURRENT_TIMESTAMP),
-(139, 209, 79.00, 74.00, 76.50, 2.70, 11, CURRENT_TIMESTAMP),
-(140, 210, 86.00, 85.00, 85.30, 3.70, 2, CURRENT_TIMESTAMP),
-(141, 216, 90.00, 71.00, 78.60, 3.00, 8, CURRENT_TIMESTAMP),
-(142, 217, 97.00, 82.00, 89.50, 3.70, 9, CURRENT_TIMESTAMP),
-(143, 218, 66.00, 93.00, 82.20, 3.30, 10, CURRENT_TIMESTAMP),
-(144, 219, 73.00, 64.00, 67.60, 1.70, 11, CURRENT_TIMESTAMP),
-(145, 220, 80.00, 75.00, 77.00, 2.70, 2, CURRENT_TIMESTAMP),
-(146, 221, 87.00, 86.00, 86.40, 3.70, 3, CURRENT_TIMESTAMP),
-(147, 222, 94.00, 57.00, 75.50, 2.70, 4, CURRENT_TIMESTAMP),
-(148, 223, 63.00, 68.00, 66.00, 1.70, 5, CURRENT_TIMESTAMP),
-(149, 224, 70.00, 79.00, 75.40, 2.70, 6, CURRENT_TIMESTAMP),
-(150, 225, 77.00, 90.00, 84.80, 3.30, 7, CURRENT_TIMESTAMP),
-(151, 231, 81.00, 76.00, 77.50, 2.70, 3, CURRENT_TIMESTAMP),
-(152, 232, 88.00, 87.00, 87.70, 3.70, 4, CURRENT_TIMESTAMP),
-(153, 233, 95.00, 58.00, 76.50, 2.70, 5, CURRENT_TIMESTAMP),
-(154, 234, 64.00, 69.00, 67.00, 1.70, 6, CURRENT_TIMESTAMP),
-(155, 235, 71.00, 80.00, 74.60, 2.30, 7, CURRENT_TIMESTAMP),
-(156, 236, 78.00, 91.00, 87.10, 3.70, 8, CURRENT_TIMESTAMP),
-(157, 237, 85.00, 62.00, 78.10, 3.00, 9, CURRENT_TIMESTAMP),
-(158, 238, 92.00, 73.00, 82.50, 3.30, 10, CURRENT_TIMESTAMP),
-(159, 239, 61.00, 84.00, 77.10, 2.70, 11, CURRENT_TIMESTAMP),
-(160, 240, 68.00, 55.00, 61.50, 1.00, 2, CURRENT_TIMESTAMP),
-(161, 246, 72.00, 81.00, 76.50, 2.70, 8, CURRENT_TIMESTAMP),
-(162, 247, 79.00, 92.00, 86.80, 3.70, 9, CURRENT_TIMESTAMP),
-(163, 248, 86.00, 63.00, 72.20, 2.30, 10, CURRENT_TIMESTAMP),
-(164, 249, 93.00, 74.00, 81.60, 3.00, 11, CURRENT_TIMESTAMP),
-(165, 250, 62.00, 85.00, 75.80, 2.70, 2, CURRENT_TIMESTAMP),
-(166, 251, 69.00, 56.00, 62.50, 1.00, 3, CURRENT_TIMESTAMP),
-(167, 252, 76.00, 67.00, 70.60, 2.00, 4, CURRENT_TIMESTAMP),
-(168, 253, 83.00, 78.00, 80.00, 3.00, 5, CURRENT_TIMESTAMP),
-(169, 254, 90.00, 89.00, 89.40, 3.70, 6, CURRENT_TIMESTAMP),
-(170, 255, 97.00, 60.00, 74.80, 2.30, 7, CURRENT_TIMESTAMP),
-(171, 261, 63.00, 86.00, 69.90, 2.00, 3, CURRENT_TIMESTAMP),
-(172, 262, 70.00, 57.00, 63.50, 1.00, 4, CURRENT_TIMESTAMP),
-(173, 263, 77.00, 68.00, 71.60, 2.00, 5, CURRENT_TIMESTAMP),
-(174, 264, 84.00, 79.00, 82.00, 3.30, 6, CURRENT_TIMESTAMP),
-(175, 265, 91.00, 90.00, 90.30, 4.00, 7, CURRENT_TIMESTAMP),
-(176, 266, 60.00, 61.00, 60.30, 1.00, 8, CURRENT_TIMESTAMP),
-(177, 267, 67.00, 72.00, 69.50, 2.00, 9, CURRENT_TIMESTAMP),
-(178, 268, 74.00, 83.00, 80.30, 3.00, 10, CURRENT_TIMESTAMP),
-(179, 269, 81.00, 94.00, 87.50, 3.70, 11, CURRENT_TIMESTAMP),
-(180, 270, 88.00, 65.00, 71.90, 2.00, 2, CURRENT_TIMESTAMP);
+INSERT INTO grades(id, enrollment_id, usual_score, exam_score, updated_by, updated_at) VALUES
+(121, 186, 70.00, 61.00, 8, CURRENT_TIMESTAMP),
+(122, 187, 77.00, 72.00, 9, CURRENT_TIMESTAMP),
+(123, 188, 84.00, 83.00, 10, CURRENT_TIMESTAMP),
+(124, 189, 91.00, 94.00, 11, CURRENT_TIMESTAMP),
+(125, 190, 60.00, 65.00, 2, CURRENT_TIMESTAMP),
+(126, 191, 67.00, 76.00, 3, CURRENT_TIMESTAMP),
+(127, 192, 74.00, 87.00, 4, CURRENT_TIMESTAMP),
+(128, 193, 81.00, 58.00, 5, CURRENT_TIMESTAMP),
+(129, 194, 88.00, 69.00, 6, CURRENT_TIMESTAMP),
+(130, 195, 95.00, 80.00, 7, CURRENT_TIMESTAMP),
+(131, 201, 61.00, 66.00, 3, CURRENT_TIMESTAMP),
+(132, 202, 68.00, 77.00, 4, CURRENT_TIMESTAMP),
+(133, 203, 75.00, 88.00, 5, CURRENT_TIMESTAMP),
+(134, 204, 82.00, 59.00, 6, CURRENT_TIMESTAMP),
+(135, 205, 89.00, 70.00, 7, CURRENT_TIMESTAMP),
+(136, 206, 96.00, 81.00, 8, CURRENT_TIMESTAMP),
+(137, 207, 65.00, 92.00, 9, CURRENT_TIMESTAMP),
+(138, 208, 72.00, 63.00, 10, CURRENT_TIMESTAMP),
+(139, 209, 79.00, 74.00, 11, CURRENT_TIMESTAMP),
+(140, 210, 86.00, 85.00, 2, CURRENT_TIMESTAMP),
+(141, 216, 90.00, 71.00, 8, CURRENT_TIMESTAMP),
+(142, 217, 97.00, 82.00, 9, CURRENT_TIMESTAMP),
+(143, 218, 66.00, 93.00, 10, CURRENT_TIMESTAMP),
+(144, 219, 73.00, 64.00, 11, CURRENT_TIMESTAMP),
+(145, 220, 80.00, 75.00, 2, CURRENT_TIMESTAMP),
+(146, 221, 87.00, 86.00, 3, CURRENT_TIMESTAMP),
+(147, 222, 94.00, 57.00, 4, CURRENT_TIMESTAMP),
+(148, 223, 63.00, 68.00, 5, CURRENT_TIMESTAMP),
+(149, 224, 70.00, 79.00, 6, CURRENT_TIMESTAMP),
+(150, 225, 77.00, 90.00, 7, CURRENT_TIMESTAMP),
+(151, 231, 81.00, 76.00, 3, CURRENT_TIMESTAMP),
+(152, 232, 88.00, 87.00, 4, CURRENT_TIMESTAMP),
+(153, 233, 95.00, 58.00, 5, CURRENT_TIMESTAMP),
+(154, 234, 64.00, 69.00, 6, CURRENT_TIMESTAMP),
+(155, 235, 71.00, 80.00, 7, CURRENT_TIMESTAMP),
+(156, 236, 78.00, 91.00, 8, CURRENT_TIMESTAMP),
+(157, 237, 85.00, 62.00, 9, CURRENT_TIMESTAMP),
+(158, 238, 92.00, 73.00, 10, CURRENT_TIMESTAMP),
+(159, 239, 61.00, 84.00, 11, CURRENT_TIMESTAMP),
+(160, 240, 68.00, 55.00, 2, CURRENT_TIMESTAMP),
+(161, 246, 72.00, 81.00, 8, CURRENT_TIMESTAMP),
+(162, 247, 79.00, 92.00, 9, CURRENT_TIMESTAMP),
+(163, 248, 86.00, 63.00, 10, CURRENT_TIMESTAMP),
+(164, 249, 93.00, 74.00, 11, CURRENT_TIMESTAMP),
+(165, 250, 62.00, 85.00, 2, CURRENT_TIMESTAMP),
+(166, 251, 69.00, 56.00, 3, CURRENT_TIMESTAMP),
+(167, 252, 76.00, 67.00, 4, CURRENT_TIMESTAMP),
+(168, 253, 83.00, 78.00, 5, CURRENT_TIMESTAMP),
+(169, 254, 90.00, 89.00, 6, CURRENT_TIMESTAMP),
+(170, 255, 97.00, 60.00, 7, CURRENT_TIMESTAMP),
+(171, 261, 63.00, 86.00, 3, CURRENT_TIMESTAMP),
+(172, 262, 70.00, 57.00, 4, CURRENT_TIMESTAMP),
+(173, 263, 77.00, 68.00, 5, CURRENT_TIMESTAMP),
+(174, 264, 84.00, 79.00, 6, CURRENT_TIMESTAMP),
+(175, 265, 91.00, 90.00, 7, CURRENT_TIMESTAMP),
+(176, 266, 60.00, 61.00, 8, CURRENT_TIMESTAMP),
+(177, 267, 67.00, 72.00, 9, CURRENT_TIMESTAMP),
+(178, 268, 74.00, 83.00, 10, CURRENT_TIMESTAMP),
+(179, 269, 81.00, 94.00, 11, CURRENT_TIMESTAMP),
+(180, 270, 88.00, 65.00, 2, CURRENT_TIMESTAMP);
 
-INSERT INTO grades(id, enrollment_id, usual_score, exam_score, final_score, grade_point, updated_by, updated_at) VALUES
-(181, 276, 92.00, 91.00, 91.40, 4.00, 8, CURRENT_TIMESTAMP),
-(182, 277, 61.00, 62.00, 61.60, 1.00, 9, CURRENT_TIMESTAMP),
-(183, 278, 68.00, 73.00, 71.00, 2.00, 10, CURRENT_TIMESTAMP),
-(184, 279, 75.00, 84.00, 80.40, 3.00, 11, CURRENT_TIMESTAMP),
-(185, 280, 82.00, 55.00, 68.50, 2.00, 2, CURRENT_TIMESTAMP),
-(186, 281, 89.00, 66.00, 75.20, 2.70, 3, CURRENT_TIMESTAMP),
-(187, 282, 96.00, 77.00, 84.60, 3.30, 4, CURRENT_TIMESTAMP),
-(188, 283, 65.00, 88.00, 78.80, 3.00, 5, CURRENT_TIMESTAMP),
-(189, 284, 72.00, 59.00, 64.20, 1.50, 6, CURRENT_TIMESTAMP),
-(190, 285, 79.00, 70.00, 74.50, 2.30, 7, CURRENT_TIMESTAMP),
-(191, 291, 83.00, 56.00, 69.50, 2.00, 3, CURRENT_TIMESTAMP),
-(192, 292, 90.00, 67.00, 76.20, 2.70, 4, CURRENT_TIMESTAMP),
-(193, 293, 97.00, 78.00, 89.40, 3.70, 5, CURRENT_TIMESTAMP),
-(194, 294, 66.00, 89.00, 82.10, 3.30, 6, CURRENT_TIMESTAMP),
-(195, 295, 73.00, 60.00, 69.10, 2.00, 7, CURRENT_TIMESTAMP),
-(196, 296, 80.00, 71.00, 75.50, 2.70, 8, CURRENT_TIMESTAMP),
-(197, 297, 87.00, 82.00, 83.50, 3.30, 9, CURRENT_TIMESTAMP),
-(198, 298, 94.00, 93.00, 93.50, 4.00, 10, CURRENT_TIMESTAMP),
-(199, 299, 63.00, 64.00, 63.70, 1.00, 11, CURRENT_TIMESTAMP),
-(200, 300, 70.00, 75.00, 71.50, 2.00, 2, CURRENT_TIMESTAMP);
+INSERT INTO grades(id, enrollment_id, usual_score, exam_score, updated_by, updated_at) VALUES
+(181, 276, 92.00, 91.00, 8, CURRENT_TIMESTAMP),
+(182, 277, 61.00, 62.00, 9, CURRENT_TIMESTAMP),
+(183, 278, 68.00, 73.00, 10, CURRENT_TIMESTAMP),
+(184, 279, 75.00, 84.00, 11, CURRENT_TIMESTAMP),
+(185, 280, 82.00, 55.00, 2, CURRENT_TIMESTAMP),
+(186, 281, 89.00, 66.00, 3, CURRENT_TIMESTAMP),
+(187, 282, 96.00, 77.00, 4, CURRENT_TIMESTAMP),
+(188, 283, 65.00, 88.00, 5, CURRENT_TIMESTAMP),
+(189, 284, 72.00, 59.00, 6, CURRENT_TIMESTAMP),
+(190, 285, 79.00, 70.00, 7, CURRENT_TIMESTAMP),
+(191, 291, 83.00, 56.00, 3, CURRENT_TIMESTAMP),
+(192, 292, 90.00, 67.00, 4, CURRENT_TIMESTAMP),
+(193, 293, 97.00, 78.00, 5, CURRENT_TIMESTAMP),
+(194, 294, 66.00, 89.00, 6, CURRENT_TIMESTAMP),
+(195, 295, 73.00, 60.00, 7, CURRENT_TIMESTAMP),
+(196, 296, 80.00, 71.00, 8, CURRENT_TIMESTAMP),
+(197, 297, 87.00, 82.00, 9, CURRENT_TIMESTAMP),
+(198, 298, 94.00, 93.00, 10, CURRENT_TIMESTAMP),
+(199, 299, 63.00, 64.00, 11, CURRENT_TIMESTAMP),
+(200, 300, 70.00, 75.00, 2, CURRENT_TIMESTAMP);
 
 INSERT INTO notices(id, title, content, audience, created_by, created_at) VALUES
 (1, '本学期选课开放', '请同学们在规定时间内完成选课，教师及时维护课程成绩。', 'all', 1, CURRENT_TIMESTAMP),

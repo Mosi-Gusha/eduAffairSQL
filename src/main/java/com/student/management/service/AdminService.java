@@ -4,6 +4,8 @@ import java.io.File;
 import java.lang.management.ManagementFactory;
 import java.net.NetworkInterface;
 import java.net.SocketException;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
@@ -288,6 +290,7 @@ public class AdminService {
 
     @Transactional
     public Map<String, Object> createSemester(SemesterRequest request) {
+        validateSemesterRange(null, request);
         adminMapper.insertSemester(request);
         clearTeachingCaches();
         return message("学期已新建，可开始维护该学期课程");
@@ -295,6 +298,10 @@ public class AdminService {
 
     @Transactional
     public Map<String, Object> updateSemester(Long semesterId, SemesterRequest request) {
+        if (adminMapper.countSemesterById(semesterId) == 0) {
+            throw new ApiException(400, "学期不存在");
+        }
+        validateSemesterRange(semesterId, request);
         int updated = adminMapper.updateSemester(semesterId, request);
         if (updated == 0) {
             throw new ApiException(400, "学期不存在");
@@ -598,6 +605,23 @@ public class AdminService {
             }
         }
         return rows;
+    }
+
+    private void validateSemesterRange(Long semesterId, SemesterRequest request) {
+        LocalDate startDate;
+        LocalDate endDate;
+        try {
+            startDate = LocalDate.parse(request.startDate());
+            endDate = LocalDate.parse(request.endDate());
+        } catch (DateTimeParseException | NullPointerException ex) {
+            throw new ApiException(400, "学期日期格式不正确");
+        }
+        if (startDate.isAfter(endDate)) {
+            throw new ApiException(400, "学期开始日期不能晚于结束日期");
+        }
+        if (adminMapper.countOverlappingSemesters(semesterId, request.startDate(), request.endDate()) > 0) {
+            throw new ApiException(400, "学期日期范围不能与已有学期重叠");
+        }
     }
 
     private void validateRatio(Double usualRatio, Double examRatio) {

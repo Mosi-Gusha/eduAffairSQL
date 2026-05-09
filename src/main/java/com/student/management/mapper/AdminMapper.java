@@ -38,7 +38,7 @@ public interface AdminMapper {
                    SUM(g.final_score >= 80 AND g.final_score < 90) AS good,
                    SUM(g.final_score >= 60 AND g.final_score < 80) AS passed,
                    SUM(g.final_score < 60) AS failed
-              FROM grades g
+              FROM grade_results g
              WHERE g.final_score IS NOT NULL
             """)
     Map<String, Object> gradeDistribution();
@@ -104,6 +104,20 @@ public interface AdminMapper {
             VALUES(#{name}, #{startDate}, #{endDate}, #{maxCredit})
             """)
     int insertSemester(SemesterRequest request);
+
+    @Select("SELECT COUNT(*) FROM semesters WHERE id = #{semesterId}")
+    int countSemesterById(@Param("semesterId") Long semesterId);
+
+    @Select("""
+            SELECT COUNT(*)
+              FROM semesters
+             WHERE (#{semesterId} IS NULL OR id <> #{semesterId})
+               AND start_date <= #{endDate}
+               AND end_date >= #{startDate}
+            """)
+    int countOverlappingSemesters(@Param("semesterId") Long semesterId,
+                                  @Param("startDate") String startDate,
+                                  @Param("endDate") String endDate);
 
     @Update("""
             UPDATE semesters
@@ -176,7 +190,7 @@ public interface AdminMapper {
     @Update("UPDATE courses SET status = #{status} WHERE id = #{courseId}")
     int updateCourseStatus(@Param("courseId") Long courseId, @Param("status") String status);
 
-    @Select("SELECT id, building, room_no AS roomNo, capacity FROM classrooms ORDER BY id")
+    @Select("SELECT id, building, room_no AS roomNo FROM classrooms ORDER BY id")
     List<Map<String, Object>> classrooms();
 
     @Select("""
@@ -281,7 +295,7 @@ public interface AdminMapper {
                    u.display_name AS teacherName,
                    t.id AS teacherId, t.teacher_no AS teacherNo,
                    cr.id AS classroomId, CONCAT(cr.building, cr.room_no) AS classroom
-              FROM course_offerings co
+              FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN departments d ON d.id = c.department_id
               JOIN semesters s ON s.id = co.semester_id
@@ -368,7 +382,7 @@ public interface AdminMapper {
             SELECT co.id AS offeringId, c.code AS courseCode, c.name AS courseName,
                    u.display_name AS teacherName, co.capacity, co.selected_count AS selectedCount,
                    ROUND(co.selected_count / NULLIF(co.capacity, 0) * 100, 1) AS fillRate
-              FROM course_offerings co
+              FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
@@ -391,7 +405,7 @@ public interface AdminMapper {
               JOIN users u ON u.id = s.user_id
               JOIN majors m ON m.id = s.major_id
               JOIN departments d ON d.id = m.department_id
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.offering_id = #{offeringId} AND e.status = 'selected'
              ORDER BY s.student_no
             """)
@@ -412,14 +426,14 @@ public interface AdminMapper {
 
     @Update("""
             UPDATE enrollments
-               SET status = 'dropped', dropped_at = CURRENT_TIMESTAMP
+               SET status = 'dropped'
              WHERE student_id = #{studentId} AND offering_id = #{offeringId} AND status = 'selected'
             """)
     int adminDropCourse(@Param("studentId") Long studentId, @Param("offeringId") Long offeringId);
 
     @Update("""
             UPDATE enrollments
-               SET status = 'dropped', dropped_at = CURRENT_TIMESTAMP
+               SET status = 'dropped'
              WHERE id = #{enrollmentId} AND status = 'selected'
             """)
     int adminDropEnrollment(@Param("enrollmentId") Long enrollmentId);
@@ -449,7 +463,7 @@ public interface AdminMapper {
               JOIN course_offerings co ON co.id = e.offering_id
               JOIN courses c ON c.id = co.course_id
               JOIN semesters sem ON sem.id = co.semester_id
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.student_id = #{studentId} AND e.status = 'selected'
                AND g.final_score IS NOT NULL
              ORDER BY sem.start_date DESC, c.code
@@ -465,7 +479,7 @@ public interface AdminMapper {
                    SUM(g.final_score < 60) AS failed,
                    COUNT(g.id) AS gradedCount
               FROM enrollments e
-              LEFT JOIN grades g ON g.enrollment_id = e.id
+              LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.offering_id = #{offeringId} AND e.status = 'selected'
             """)
     Map<String, Object> courseGradeStats(@Param("offeringId") Long offeringId);
@@ -493,7 +507,7 @@ public interface AdminMapper {
                    CONCAT(cr.building, cr.room_no) AS classroom,
                    co.capacity, co.selected_count AS selectedCount,
                    co.usual_ratio AS usualRatio, co.exam_ratio AS examRatio
-              FROM course_offerings co
+              FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN classrooms cr ON cr.id = co.classroom_id
               JOIN semesters s ON s.id = co.semester_id
@@ -513,7 +527,7 @@ public interface AdminMapper {
                    co.usual_ratio AS usualRatio, co.exam_ratio AS examRatio,
                    u.display_name AS teacherName
               FROM enrollments e
-              JOIN course_offerings co ON co.id = e.offering_id
+              JOIN course_offering_stats co ON co.id = e.offering_id
               JOIN courses c ON c.id = co.course_id
               JOIN classrooms cr ON cr.id = co.classroom_id
               JOIN semesters s ON s.id = co.semester_id
