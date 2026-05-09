@@ -12,7 +12,7 @@ import org.apache.ibatis.annotations.Select;
 public interface TeacherMapper {
     @Select("""
             SELECT co.id, co.capacity, co.selected_count AS selectedCount,
-                   co.status, co.usual_ratio AS usualRatio, co.exam_ratio AS examRatio,
+                   co.status, co.exam_ratio AS examRatio,
                    c.code AS courseCode, c.name AS courseName, c.credit,
                    s.id AS semesterId, s.name AS semesterName,
                    CASE

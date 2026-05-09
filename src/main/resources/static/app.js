@@ -319,7 +319,6 @@ function asNumberFields(data, fields) {
 function collectOfferingPayload(form) {
   const raw = formObject(form);
   const data = asNumberFields(raw, ['courseId', 'semesterId', 'teacherId', 'classroomId', 'capacity']);
-  data.usualRatio = raw.usualRatio != null ? Number(raw.usualRatio) / 100 : null;
   data.examRatio = raw.examRatio != null ? Number(raw.examRatio) / 100 : null;
   ['timeDayOfWeek', 'timeStartSection', 'timeEndSection', 'timeStartWeek', 'timeEndWeek', 'timeWeekType'].forEach((field) => {
     delete data[field];
@@ -804,8 +803,7 @@ function renderOfferingModal() {
             <label class="field"><span>教室</span><select name="classroomId" required>${options(catalog.classrooms, 'id', (item) => `${item.building}${item.roomNo}`)}</select></label>
             ${offeringTimesEditor()}
             <label class="field"><span>容量</span><input name="capacity" type="number" min="1" required></label>
-            <label class="field"><span>平时比例(%)</span><input name="usualRatio" type="number" min="0" max="100" step="1" placeholder="40"></label>
-            <label class="field"><span>考试比例(%)</span><input name="examRatio" type="number" min="0" max="100" step="1" placeholder="60"></label>
+            <label class="field"><span>期末占比(%)</span><input name="examRatio" type="number" min="0" max="100" step="1" placeholder="60"></label>
             <div class="form-actions"><button class="btn btn-primary" type="submit" ${currentSemester && availableCourses.length ? '' : 'disabled'}>添加课程班</button></div>
           </form>
         </div>
@@ -820,7 +818,6 @@ function renderEditOfferingModal(offeringId) {
   const offering = offerings.find((o) => String(o.id) === String(offeringId));
   if (!offering) return '';
   const currentSemester = catalog.currentSemester;
-  const usualPct = offering.usualRatio != null ? Math.round(Number(offering.usualRatio) * 100) : '';
   const examPct = offering.examRatio != null ? Math.round(Number(offering.examRatio) * 100) : '';
   const minCapacity = Math.max(1, Number(offering.selectedCount || 0));
   return `
@@ -841,8 +838,7 @@ function renderEditOfferingModal(offeringId) {
             <label class="field"><span>教室</span><select name="classroomId" required>${options(catalog.classrooms, 'id', (item) => `${item.building}${item.roomNo}`, offering.classroomId)}</select></label>
             ${offeringTimesEditor(offeringTimes(offering))}
             <label class="field"><span>容量</span><input name="capacity" type="number" min="${minCapacity}" value="${text(offering.capacity)}" required></label>
-            <label class="field"><span>平时比例(%)</span><input name="usualRatio" type="number" min="0" max="100" step="1" value="${usualPct}" placeholder="40"></label>
-            <label class="field"><span>考试比例(%)</span><input name="examRatio" type="number" min="0" max="100" step="1" value="${examPct}" placeholder="60"></label>
+            <label class="field"><span>期末占比(%)</span><input name="examRatio" type="number" min="0" max="100" step="1" value="${examPct}" placeholder="60"></label>
             <div class="form-actions"><button class="btn btn-primary" type="submit">保存修改</button></div>
           </form>
         </div>
@@ -994,14 +990,13 @@ function renderTeacherOfferingsModal(teacherId) {
         <div class="modal-body">
           ${data.length ? `
             <div class="table-wrap"><table>
-              <thead><tr><th class="col-course">课程</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">容量</th><th class="col-ratio">平时比例</th><th class="col-ratio">考试比例</th></tr></thead>
+              <thead><tr><th class="col-course">课程</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">容量</th><th class="col-ratio">期末占比</th></tr></thead>
               <tbody>${data.map((row) => `
                 <tr>
                   <td><b>${text(row.courseCode)}</b> ${text(row.courseName)}</td>
                   <td>${courseTime(row)}</td>
                   <td>${text(row.classroom)}</td>
                   <td>${number(row.selectedCount)}/${number(row.capacity)}</td>
-                  <td>${number(Math.round(Number(row.usualRatio) * 100))}%</td>
                   <td>${number(Math.round(Number(row.examRatio) * 100))}%</td>
                 </tr>
               `).join('')}</tbody>
@@ -1025,7 +1020,7 @@ function renderStudentEnrollmentsModal(studentId) {
         <div class="modal-body">
           ${data.length ? `
             <div class="table-wrap"><table>
-              <thead><tr><th class="col-course">课程</th><th class="col-name">教师</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">容量</th><th class="col-ratio">平时比例</th><th class="col-ratio">考试比例</th></tr></thead>
+              <thead><tr><th class="col-course">课程</th><th class="col-name">教师</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">容量</th><th class="col-ratio">期末占比</th></tr></thead>
               <tbody>${data.map((row) => `
                 <tr>
                   <td><b>${text(row.courseCode)}</b> ${text(row.courseName)}</td>
@@ -1033,7 +1028,6 @@ function renderStudentEnrollmentsModal(studentId) {
                   <td>${courseTime(row)}</td>
                   <td>${text(row.classroom)}</td>
                   <td>${number(row.selectedCount)}/${number(row.capacity)}</td>
-                  <td>${number(Math.round(Number(row.usualRatio) * 100))}%</td>
                   <td>${number(Math.round(Number(row.examRatio) * 100))}%</td>
                 </tr>
               `).join('')}</tbody>

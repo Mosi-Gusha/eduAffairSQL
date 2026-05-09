@@ -288,7 +288,7 @@ public interface AdminMapper {
     @Select("""
             <script>
             SELECT co.id, co.capacity, co.selected_count AS selectedCount,
-                   co.status, co.usual_ratio AS usualRatio, co.exam_ratio AS examRatio,
+                   co.status, co.exam_ratio AS examRatio,
                    c.id AS courseId, c.code AS courseCode, c.name AS courseName, c.credit,
                    d.name AS departmentName,
                    s.id AS semesterId, s.name AS semesterName,
@@ -322,9 +322,9 @@ public interface AdminMapper {
 
     @Insert("""
             INSERT INTO course_offerings(course_id, semester_id, teacher_id, classroom_id,
-                                         capacity, status, usual_ratio, exam_ratio)
+                                         capacity, status, exam_ratio)
             VALUES(#{courseId}, #{semesterId}, #{teacherId}, #{classroomId}, #{capacity}, 'selecting',
-                   COALESCE(#{usualRatio}, 0.4), COALESCE(#{examRatio}, 0.6))
+                   COALESCE(#{examRatio}, 0.6))
             """)
     int insertOffering(CreateOfferingRequest request);
 
@@ -387,7 +387,6 @@ public interface AdminMapper {
                    classroom_id = #{request.classroomId},
                    capacity = #{request.capacity},
                    status = #{request.status},
-                   usual_ratio = COALESCE(#{request.usualRatio}, 0.4),
                    exam_ratio = COALESCE(#{request.examRatio}, 0.6)
              WHERE id = #{offeringId}
             """)
@@ -540,7 +539,7 @@ public interface AdminMapper {
             SELECT co.id, c.code AS courseCode, c.name AS courseName,
                    CONCAT(cr.building, cr.room_no) AS classroom,
                    co.capacity, co.selected_count AS selectedCount,
-                   co.usual_ratio AS usualRatio, co.exam_ratio AS examRatio
+                   co.exam_ratio AS examRatio
               FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN classrooms cr ON cr.id = co.classroom_id
@@ -558,7 +557,7 @@ public interface AdminMapper {
             SELECT co.id AS offeringId, c.code AS courseCode, c.name AS courseName,
                    CONCAT(cr.building, cr.room_no) AS classroom,
                    co.capacity, co.selected_count AS selectedCount,
-                   co.usual_ratio AS usualRatio, co.exam_ratio AS examRatio,
+                   co.exam_ratio AS examRatio,
                    u.display_name AS teacherName
               FROM enrollments e
               JOIN course_offering_stats co ON co.id = e.offering_id

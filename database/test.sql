@@ -110,20 +110,16 @@ CREATE TABLE course_offerings (
   teacher_id BIGINT NOT NULL,
   classroom_id BIGINT NOT NULL,
   capacity SMALLINT NOT NULL,
-  usual_ratio DECIMAL(4,2) NOT NULL DEFAULT 0.40,
   exam_ratio DECIMAL(4,2) NOT NULL DEFAULT 0.60,
   status ENUM('selecting','closed') NOT NULL DEFAULT 'selecting',
   CONSTRAINT fk_offerings_course FOREIGN KEY (course_id) REFERENCES courses(id),
   CONSTRAINT fk_offerings_semester FOREIGN KEY (semester_id) REFERENCES semesters(id),
   CONSTRAINT fk_offerings_teacher FOREIGN KEY (teacher_id) REFERENCES teachers(id),
   CONSTRAINT fk_offerings_room FOREIGN KEY (classroom_id) REFERENCES classrooms(id),
-  CONSTRAINT chk_offerings_ratio_sum
+  CONSTRAINT chk_offerings_exam_ratio
   CHECK (
-    usual_ratio >= 0
-    AND usual_ratio <= 1
-    AND exam_ratio >= 0
+    exam_ratio >= 0
     AND exam_ratio <= 1
-    AND usual_ratio + exam_ratio = 1.00
   )
 ) ENGINE=InnoDB;
 
@@ -359,7 +355,7 @@ END$$
 
 CREATE VIEW course_offering_stats AS
 SELECT co.id, co.course_id, co.semester_id, co.teacher_id, co.classroom_id,
-       co.capacity, co.usual_ratio, co.exam_ratio, co.status,
+       co.capacity, co.exam_ratio, co.status,
        COALESCE(selection_counts.selected_count, 0) AS selected_count
   FROM course_offerings co
   LEFT JOIN (
@@ -391,7 +387,7 @@ SELECT scored.id, scored.enrollment_id, scored.usual_score, scored.exam_score,
         SELECT g.id, g.enrollment_id, g.usual_score, g.exam_score,
                CASE
                  WHEN g.usual_score IS NOT NULL AND g.exam_score IS NOT NULL
-                 THEN ROUND(g.usual_score * co.usual_ratio + g.exam_score * co.exam_ratio, 0)
+                 THEN ROUND(g.usual_score * (1 - co.exam_ratio) + g.exam_score * co.exam_ratio, 0)
                  ELSE NULL
                END AS final_score,
                g.updated_by, g.updated_at
@@ -676,47 +672,47 @@ INSERT INTO classrooms(id, building, room_no) VALUES
 (11, '实验楼', '305'),
 (12, 'A', '501');
 
-INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, capacity, usual_ratio, exam_ratio, status) VALUES
-(1, 1, 1, 1, 1, 80, 0.40, 0.60, 'selecting'),
-(2, 2, 1, 2, 2, 70, 0.30, 0.70, 'selecting'),
-(3, 3, 1, 3, 3, 120, 0.40, 0.60, 'selecting'),
-(4, 4, 1, 4, 4, 100, 0.50, 0.50, 'selecting'),
-(5, 5, 1, 5, 5, 90, 0.40, 0.60, 'selecting'),
-(6, 6, 1, 6, 6, 60, 0.30, 0.70, 'selecting'),
-(7, 7, 1, 7, 7, 150, 0.50, 0.50, 'selecting'),
-(8, 8, 1, 8, 8, 40, 0.70, 0.30, 'selecting'),
-(9, 9, 1, 9, 9, 75, 0.40, 0.60, 'selecting'),
-(10, 10, 1, 10, 10, 45, 0.50, 0.50, 'selecting'),
-(11, 11, 1, 1, 1, 80, 0.40, 0.60, 'selecting'),
-(12, 12, 1, 2, 2, 70, 0.40, 0.60, 'selecting'),
-(13, 13, 1, 3, 3, 110, 0.40, 0.60, 'selecting'),
-(14, 14, 1, 4, 4, 55, 0.60, 0.40, 'selecting'),
-(15, 15, 1, 5, 5, 80, 0.40, 0.60, 'selecting'),
-(16, 16, 1, 6, 6, 60, 0.30, 0.70, 'selecting'),
-(17, 17, 1, 7, 7, 120, 0.50, 0.50, 'selecting'),
-(18, 18, 1, 8, 8, 36, 0.70, 0.30, 'selecting'),
-(19, 19, 1, 9, 9, 60, 0.40, 0.60, 'selecting'),
-(20, 20, 1, 10, 10, 48, 0.50, 0.50, 'selecting'),
-(21, 21, 1, 1, 11, 45, 0.60, 0.40, 'selecting'),
-(22, 22, 1, 2, 2, 50, 0.40, 0.60, 'selecting'),
-(23, 23, 1, 3, 3, 100, 0.40, 0.60, 'selecting'),
-(24, 24, 1, 4, 4, 60, 0.50, 0.50, 'selecting'),
-(25, 25, 1, 5, 5, 75, 0.40, 0.60, 'selecting'),
-(26, 26, 1, 6, 6, 45, 0.40, 0.60, 'selecting'),
-(27, 27, 1, 7, 7, 140, 0.50, 0.50, 'selecting'),
-(28, 28, 1, 8, 8, 35, 0.70, 0.30, 'selecting'),
-(29, 29, 1, 9, 12, 55, 0.40, 0.60, 'selecting'),
-(30, 30, 1, 10, 10, 40, 0.50, 0.50, 'selecting'),
-(31, 31, 1, 1, 1, 65, 0.40, 0.60, 'selecting'),
-(32, 32, 1, 2, 2, 50, 0.40, 0.60, 'selecting'),
-(33, 33, 1, 3, 3, 80, 0.60, 0.40, 'selecting'),
-(34, 34, 1, 4, 4, 50, 0.50, 0.50, 'selecting'),
-(35, 35, 1, 5, 5, 70, 0.50, 0.50, 'selecting'),
-(36, 36, 1, 6, 6, 55, 0.40, 0.60, 'selecting'),
-(37, 37, 1, 7, 7, 95, 0.50, 0.50, 'selecting'),
-(38, 38, 1, 8, 8, 32, 0.70, 0.30, 'selecting'),
-(39, 39, 1, 9, 9, 60, 0.50, 0.50, 'selecting'),
-(40, 40, 1, 10, 10, 42, 0.50, 0.50, 'closed');
+INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, capacity, exam_ratio, status) VALUES
+(1, 1, 1, 1, 1, 80, 0.60, 'selecting'),
+(2, 2, 1, 2, 2, 70, 0.70, 'selecting'),
+(3, 3, 1, 3, 3, 120, 0.60, 'selecting'),
+(4, 4, 1, 4, 4, 100, 0.50, 'selecting'),
+(5, 5, 1, 5, 5, 90, 0.60, 'selecting'),
+(6, 6, 1, 6, 6, 60, 0.70, 'selecting'),
+(7, 7, 1, 7, 7, 150, 0.50, 'selecting'),
+(8, 8, 1, 8, 8, 40, 0.30, 'selecting'),
+(9, 9, 1, 9, 9, 75, 0.60, 'selecting'),
+(10, 10, 1, 10, 10, 45, 0.50, 'selecting'),
+(11, 11, 1, 1, 1, 80, 0.60, 'selecting'),
+(12, 12, 1, 2, 2, 70, 0.60, 'selecting'),
+(13, 13, 1, 3, 3, 110, 0.60, 'selecting'),
+(14, 14, 1, 4, 4, 55, 0.40, 'selecting'),
+(15, 15, 1, 5, 5, 80, 0.60, 'selecting'),
+(16, 16, 1, 6, 6, 60, 0.70, 'selecting'),
+(17, 17, 1, 7, 7, 120, 0.50, 'selecting'),
+(18, 18, 1, 8, 8, 36, 0.30, 'selecting'),
+(19, 19, 1, 9, 9, 60, 0.60, 'selecting'),
+(20, 20, 1, 10, 10, 48, 0.50, 'selecting'),
+(21, 21, 1, 1, 11, 45, 0.40, 'selecting'),
+(22, 22, 1, 2, 2, 50, 0.60, 'selecting'),
+(23, 23, 1, 3, 3, 100, 0.60, 'selecting'),
+(24, 24, 1, 4, 4, 60, 0.50, 'selecting'),
+(25, 25, 1, 5, 5, 75, 0.60, 'selecting'),
+(26, 26, 1, 6, 6, 45, 0.60, 'selecting'),
+(27, 27, 1, 7, 7, 140, 0.50, 'selecting'),
+(28, 28, 1, 8, 8, 35, 0.30, 'selecting'),
+(29, 29, 1, 9, 12, 55, 0.60, 'selecting'),
+(30, 30, 1, 10, 10, 40, 0.50, 'selecting'),
+(31, 31, 1, 1, 1, 65, 0.60, 'selecting'),
+(32, 32, 1, 2, 2, 50, 0.60, 'selecting'),
+(33, 33, 1, 3, 3, 80, 0.40, 'selecting'),
+(34, 34, 1, 4, 4, 50, 0.50, 'selecting'),
+(35, 35, 1, 5, 5, 70, 0.50, 'selecting'),
+(36, 36, 1, 6, 6, 55, 0.60, 'selecting'),
+(37, 37, 1, 7, 7, 95, 0.50, 'selecting'),
+(38, 38, 1, 8, 8, 32, 0.30, 'selecting'),
+(39, 39, 1, 9, 9, 60, 0.50, 'selecting'),
+(40, 40, 1, 10, 10, 42, 0.50, 'closed');
 
 INSERT INTO course_offering_times(id, offering_id, day_of_week, start_section, end_section, start_week, end_week, week_type) VALUES
 (1, 1, 1, 1, 2, 1, 16, 'all'),
@@ -760,37 +756,37 @@ INSERT INTO course_offering_times(id, offering_id, day_of_week, start_section, e
 (39, 39, 5, 1, 2, 1, 16, 'all'),
 (40, 40, 3, 1, 2, 1, 16, 'all');
 
-INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, capacity, usual_ratio, exam_ratio, status) VALUES
-(41, 1, 2, 1, 1, 80, 0.40, 0.60, 'closed'),
-(42, 2, 2, 2, 2, 70, 0.30, 0.70, 'closed'),
-(43, 3, 2, 3, 3, 120, 0.40, 0.60, 'closed'),
-(44, 4, 2, 4, 4, 100, 0.50, 0.50, 'closed'),
-(45, 5, 2, 5, 5, 90, 0.40, 0.60, 'closed'),
-(46, 6, 2, 6, 6, 60, 0.30, 0.70, 'closed'),
-(47, 7, 2, 7, 7, 150, 0.50, 0.50, 'closed'),
-(48, 8, 2, 8, 8, 40, 0.70, 0.30, 'closed'),
-(49, 9, 2, 9, 9, 75, 0.40, 0.60, 'closed'),
-(50, 10, 2, 10, 10, 45, 0.50, 0.50, 'closed'),
-(51, 11, 2, 1, 1, 80, 0.40, 0.60, 'closed'),
-(52, 12, 2, 2, 2, 70, 0.40, 0.60, 'closed'),
-(53, 13, 2, 3, 3, 110, 0.40, 0.60, 'closed'),
-(54, 14, 2, 4, 4, 55, 0.60, 0.40, 'closed'),
-(55, 15, 2, 5, 5, 80, 0.40, 0.60, 'closed'),
-(56, 16, 2, 6, 6, 60, 0.30, 0.70, 'closed'),
-(57, 17, 2, 7, 7, 120, 0.50, 0.50, 'closed'),
-(58, 18, 2, 8, 8, 36, 0.70, 0.30, 'closed'),
-(59, 19, 2, 9, 9, 60, 0.40, 0.60, 'closed'),
-(60, 20, 2, 10, 10, 48, 0.50, 0.50, 'closed'),
-(61, 1, 3, 1, 1, 80, 0.40, 0.60, 'closed'),
-(62, 2, 3, 2, 2, 70, 0.30, 0.70, 'closed'),
-(63, 3, 3, 3, 3, 120, 0.40, 0.60, 'closed'),
-(64, 4, 3, 4, 4, 100, 0.50, 0.50, 'closed'),
-(65, 5, 3, 5, 5, 90, 0.40, 0.60, 'closed'),
-(66, 6, 3, 6, 6, 60, 0.30, 0.70, 'closed'),
-(67, 7, 3, 7, 7, 150, 0.50, 0.50, 'closed'),
-(68, 8, 3, 8, 8, 40, 0.70, 0.30, 'closed'),
-(69, 9, 3, 9, 9, 75, 0.40, 0.60, 'closed'),
-(70, 10, 3, 10, 10, 45, 0.50, 0.50, 'closed');
+INSERT INTO course_offerings(id, course_id, semester_id, teacher_id, classroom_id, capacity, exam_ratio, status) VALUES
+(41, 1, 2, 1, 1, 80, 0.60, 'closed'),
+(42, 2, 2, 2, 2, 70, 0.70, 'closed'),
+(43, 3, 2, 3, 3, 120, 0.60, 'closed'),
+(44, 4, 2, 4, 4, 100, 0.50, 'closed'),
+(45, 5, 2, 5, 5, 90, 0.60, 'closed'),
+(46, 6, 2, 6, 6, 60, 0.70, 'closed'),
+(47, 7, 2, 7, 7, 150, 0.50, 'closed'),
+(48, 8, 2, 8, 8, 40, 0.30, 'closed'),
+(49, 9, 2, 9, 9, 75, 0.60, 'closed'),
+(50, 10, 2, 10, 10, 45, 0.50, 'closed'),
+(51, 11, 2, 1, 1, 80, 0.60, 'closed'),
+(52, 12, 2, 2, 2, 70, 0.60, 'closed'),
+(53, 13, 2, 3, 3, 110, 0.60, 'closed'),
+(54, 14, 2, 4, 4, 55, 0.40, 'closed'),
+(55, 15, 2, 5, 5, 80, 0.60, 'closed'),
+(56, 16, 2, 6, 6, 60, 0.70, 'closed'),
+(57, 17, 2, 7, 7, 120, 0.50, 'closed'),
+(58, 18, 2, 8, 8, 36, 0.30, 'closed'),
+(59, 19, 2, 9, 9, 60, 0.60, 'closed'),
+(60, 20, 2, 10, 10, 48, 0.50, 'closed'),
+(61, 1, 3, 1, 1, 80, 0.60, 'closed'),
+(62, 2, 3, 2, 2, 70, 0.70, 'closed'),
+(63, 3, 3, 3, 3, 120, 0.60, 'closed'),
+(64, 4, 3, 4, 4, 100, 0.50, 'closed'),
+(65, 5, 3, 5, 5, 90, 0.60, 'closed'),
+(66, 6, 3, 6, 6, 60, 0.70, 'closed'),
+(67, 7, 3, 7, 7, 150, 0.50, 'closed'),
+(68, 8, 3, 8, 8, 40, 0.30, 'closed'),
+(69, 9, 3, 9, 9, 75, 0.60, 'closed'),
+(70, 10, 3, 10, 10, 45, 0.50, 'closed');
 
 INSERT INTO course_offering_times(id, offering_id, day_of_week, start_section, end_section, start_week, end_week, week_type) VALUES
 (41, 41, 1, 1, 2, 1, 16, 'all'),

@@ -18,7 +18,6 @@ public record CreateOfferingRequest(
         @NotEmpty(message = "至少需要一个上课时间段") List<@Valid OfferingTimeRequest> times,
         @NotNull(message = "不能为空") Integer capacity,
         String status,
-        Double usualRatio,
         Double examRatio
 ) {
     public record OfferingTimeRequest(

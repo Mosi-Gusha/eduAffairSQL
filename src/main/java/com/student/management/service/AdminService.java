@@ -261,7 +261,7 @@ public class AdminService {
         validateOfferingTimes(request.times());
         validateOfferingResourceConflicts(null, request);
         validateCourseForNewOffering(request.courseId());
-        validateRatio(request.usualRatio(), request.examRatio());
+        validateExamRatio(request.examRatio());
         adminMapper.insertOffering(request);
         Long offeringId = adminMapper.lastInsertId();
         adminMapper.insertOfferingTimes(offeringId, request.times());
@@ -273,7 +273,7 @@ public class AdminService {
     public Map<String, Object> updateOffering(Long offeringId, CreateOfferingRequest request) {
         validateOfferingTimes(request.times());
         validateOfferingResourceConflicts(offeringId, request);
-        validateRatio(request.usualRatio(), request.examRatio());
+        validateExamRatio(request.examRatio());
         adminMapper.deleteOfferingTimes(offeringId);
         adminMapper.updateOffering(offeringId, request);
         adminMapper.insertOfferingTimes(offeringId, request.times());
@@ -626,14 +626,12 @@ public class AdminService {
         }
     }
 
-    private void validateRatio(Double usualRatio, Double examRatio) {
-        if (usualRatio == null && examRatio == null) {
+    private void validateExamRatio(Double examRatio) {
+        if (examRatio == null) {
             return;
         }
-        double usual = usualRatio == null ? 0.4 : usualRatio;
-        double exam = examRatio == null ? 0.6 : examRatio;
-        if (usual < 0 || exam < 0 || Math.abs(usual + exam - 1.0) > 0.001) {
-            throw new ApiException(400, "平时分和考试分比例之和必须为 1");
+        if (examRatio < 0 || examRatio > 1) {
+            throw new ApiException(400, "期末占比必须在 0 到 1 之间");
         }
     }
 
