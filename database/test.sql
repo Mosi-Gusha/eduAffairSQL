@@ -116,7 +116,15 @@ CREATE TABLE course_offerings (
   CONSTRAINT fk_offerings_course FOREIGN KEY (course_id) REFERENCES courses(id),
   CONSTRAINT fk_offerings_semester FOREIGN KEY (semester_id) REFERENCES semesters(id),
   CONSTRAINT fk_offerings_teacher FOREIGN KEY (teacher_id) REFERENCES teachers(id),
-  CONSTRAINT fk_offerings_room FOREIGN KEY (classroom_id) REFERENCES classrooms(id)
+  CONSTRAINT fk_offerings_room FOREIGN KEY (classroom_id) REFERENCES classrooms(id),
+  CONSTRAINT chk_offerings_ratio_sum
+  CHECK (
+    usual_ratio >= 0
+    AND usual_ratio <= 1
+    AND exam_ratio >= 0
+    AND exam_ratio <= 1
+    AND usual_ratio + exam_ratio = 1.00
+  )
 ) ENGINE=InnoDB;
 
 CREATE TABLE course_offering_times (
