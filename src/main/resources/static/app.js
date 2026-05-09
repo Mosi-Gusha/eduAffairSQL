@@ -1286,7 +1286,7 @@ function renderSchedule() {
 }
 
 function scheduleGrid(rows) {
-  const slots = [[1,2], [3,4], [5,6], [7,8], [9,10]];
+  const slots = [[1,2], [3,4], [5,6], [7,8], [9,10], [11,12]];
   const entries = rows.flatMap((row) => offeringTimes(row).map((time) => ({ ...row, ...time })));
   const cells = ['<div class="schedule-head">节次</div>', ...dayNames.slice(1).map((day) => `<div class="schedule-head">${day}</div>`)];
   slots.forEach(([start, end]) => {
