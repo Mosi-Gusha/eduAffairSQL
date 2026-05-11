@@ -293,22 +293,26 @@ public interface AdminMapper {
                    d.name AS departmentName,
                    s.id AS semesterId, s.name AS semesterName,
                    u.display_name AS teacherName,
-                   t.id AS teacherId, t.teacher_no AS teacherNo,
-                   cr.id AS classroomId, CONCAT(cr.building, cr.room_no) AS classroom
+                   t.id AS teacherId, t.teacher_no AS teacherNo
               FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN departments d ON d.id = c.department_id
               JOIN semesters s ON s.id = co.semester_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
-              JOIN classrooms cr ON cr.id = co.classroom_id
              WHERE co.status = 'selecting'
              <if test="keyword != null and keyword != ''">
                AND (c.code LIKE CONCAT('%', #{keyword}, '%')
                     OR c.name LIKE CONCAT('%', #{keyword}, '%')
                     OR t.teacher_no LIKE CONCAT('%', #{keyword}, '%')
                     OR u.display_name LIKE CONCAT('%', #{keyword}, '%')
-                    OR CONCAT(cr.building, cr.room_no) LIKE CONCAT('%', #{keyword}, '%'))
+                    OR EXISTS (
+                         SELECT 1
+                           FROM course_offering_times cot
+                           JOIN classrooms cr ON cr.id = cot.classroom_id
+                          WHERE cot.offering_id = co.id
+                            AND CONCAT(cr.building, cr.room_no) LIKE CONCAT('%', #{keyword}, '%')
+                    ))
              </if>
              <if test="currentOnly">
                AND s.id = (
@@ -321,9 +325,9 @@ public interface AdminMapper {
     List<Map<String, Object>> listOfferings(@Param("keyword") String keyword, @Param("currentOnly") boolean currentOnly);
 
     @Insert("""
-            INSERT INTO course_offerings(course_id, semester_id, teacher_id, classroom_id,
+            INSERT INTO course_offerings(course_id, semester_id, teacher_id,
                                          capacity, status, exam_ratio)
-            VALUES(#{courseId}, #{semesterId}, #{teacherId}, #{classroomId}, #{capacity}, 'selecting',
+            VALUES(#{courseId}, #{semesterId}, #{teacherId}, #{capacity}, 'selecting',
                    COALESCE(#{examRatio}, 0.6))
             """)
     int insertOffering(CreateOfferingRequest request);
@@ -333,11 +337,11 @@ public interface AdminMapper {
 
     @Insert("""
             <script>
-            INSERT INTO course_offering_times(offering_id, day_of_week, start_section, end_section,
+            INSERT INTO course_offering_times(offering_id, classroom_id, day_of_week, start_section, end_section,
                                               start_week, end_week, week_type)
             VALUES
             <foreach collection="times" item="time" separator=",">
-              (#{offeringId}, #{time.dayOfWeek}, #{time.startSection}, #{time.endSection},
+              (#{offeringId}, #{time.classroomId}, #{time.dayOfWeek}, #{time.startSection}, #{time.endSection},
                #{time.startWeek}, #{time.endWeek}, #{time.weekType})
             </foreach>
             </script>
@@ -353,6 +357,7 @@ public interface AdminMapper {
               JOIN (
                 <foreach collection="times" item="time" separator=" UNION ALL ">
                   SELECT #{time.dayOfWeek} AS day_of_week,
+                         #{time.classroomId} AS classroom_id,
                          #{time.startSection} AS start_section,
                          #{time.endSection} AS end_section,
                          #{time.startWeek} AS start_week,
@@ -362,7 +367,7 @@ public interface AdminMapper {
               ) request_time
              WHERE co.semester_id = #{semesterId}
                AND (#{offeringId} IS NULL OR co.id != #{offeringId})
-               AND (co.teacher_id = #{teacherId} OR co.classroom_id = #{classroomId})
+               AND (co.teacher_id = #{teacherId} OR existing_time.classroom_id = request_time.classroom_id)
                AND existing_time.day_of_week = request_time.day_of_week
                AND NOT (existing_time.end_section &lt; request_time.start_section
                         OR existing_time.start_section &gt; request_time.end_section)
@@ -376,7 +381,6 @@ public interface AdminMapper {
     int countOfferingResourceConflicts(@Param("offeringId") Long offeringId,
                                        @Param("semesterId") Long semesterId,
                                        @Param("teacherId") Long teacherId,
-                                       @Param("classroomId") Long classroomId,
                                        @Param("times") List<CreateOfferingRequest.OfferingTimeRequest> times);
 
     @Update("""
@@ -384,7 +388,6 @@ public interface AdminMapper {
                SET course_id = #{request.courseId},
                    semester_id = #{request.semesterId},
                    teacher_id = #{request.teacherId},
-                   classroom_id = #{request.classroomId},
                    capacity = #{request.capacity},
                    status = #{request.status},
                    exam_ratio = COALESCE(#{request.examRatio}, 0.6)
@@ -473,15 +476,13 @@ public interface AdminMapper {
 
     @Select("""
             SELECT e.id AS enrollmentId, co.id AS offeringId, c.code AS courseCode, c.name AS courseName,
-                   c.credit, sem.name AS semesterName, u.display_name AS teacherName,
-                   CONCAT(cr.building, cr.room_no) AS classroom, e.status
+                   c.credit, sem.name AS semesterName, u.display_name AS teacherName, e.status
               FROM enrollments e
               JOIN course_offerings co ON co.id = e.offering_id
               JOIN courses c ON c.id = co.course_id
               JOIN semesters sem ON sem.id = co.semester_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
-              JOIN classrooms cr ON cr.id = co.classroom_id
              WHERE e.student_id = #{studentId}
              ORDER BY sem.start_date DESC, c.code
             """)
@@ -537,12 +538,10 @@ public interface AdminMapper {
 
     @Select("""
             SELECT co.id, c.code AS courseCode, c.name AS courseName,
-                   CONCAT(cr.building, cr.room_no) AS classroom,
                    co.capacity, co.selected_count AS selectedCount,
                    co.exam_ratio AS examRatio
               FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
-              JOIN classrooms cr ON cr.id = co.classroom_id
               JOIN semesters s ON s.id = co.semester_id
              WHERE co.teacher_id = #{teacherId}
                AND s.id = (
@@ -555,14 +554,12 @@ public interface AdminMapper {
 
     @Select("""
             SELECT co.id AS offeringId, c.code AS courseCode, c.name AS courseName,
-                   CONCAT(cr.building, cr.room_no) AS classroom,
                    co.capacity, co.selected_count AS selectedCount,
                    co.exam_ratio AS examRatio,
                    u.display_name AS teacherName
               FROM enrollments e
               JOIN course_offering_stats co ON co.id = e.offering_id
               JOIN courses c ON c.id = co.course_id
-              JOIN classrooms cr ON cr.id = co.classroom_id
               JOIN semesters s ON s.id = co.semester_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id

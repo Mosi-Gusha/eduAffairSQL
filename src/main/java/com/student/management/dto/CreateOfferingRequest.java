@@ -14,13 +14,13 @@ public record CreateOfferingRequest(
         @NotNull(message = "不能为空") Long courseId,
         @NotNull(message = "不能为空") Long semesterId,
         @NotNull(message = "不能为空") Long teacherId,
-        @NotNull(message = "不能为空") Long classroomId,
         @NotEmpty(message = "至少需要一个上课时间段") List<@Valid OfferingTimeRequest> times,
         @NotNull(message = "不能为空") Integer capacity,
         String status,
         Double examRatio
 ) {
     public record OfferingTimeRequest(
+            @NotNull(message = "不能为空") Long classroomId,
             @NotNull(message = "不能为空") @Min(value = 1, message = "星期必须在 1 到 7 之间")
             @Max(value = 7, message = "星期必须在 1 到 7 之间") Integer dayOfWeek,
             @NotNull(message = "不能为空") @Min(value = 1, message = "开始节次不能小于 1")

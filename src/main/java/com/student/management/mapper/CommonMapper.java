@@ -85,15 +85,17 @@ public interface CommonMapper {
 
     @Select("""
             <script>
-            SELECT id, offering_id AS offeringId, day_of_week AS dayOfWeek,
-                   start_section AS startSection, end_section AS endSection,
-                   start_week AS startWeek, end_week AS endWeek, week_type AS weekType
-              FROM course_offering_times
-             WHERE offering_id IN
+            SELECT cot.id, cot.offering_id AS offeringId, cot.day_of_week AS dayOfWeek,
+                   cot.start_section AS startSection, cot.end_section AS endSection,
+                   cot.start_week AS startWeek, cot.end_week AS endWeek, cot.week_type AS weekType,
+                   cot.classroom_id AS classroomId, CONCAT(cr.building, cr.room_no) AS classroom
+              FROM course_offering_times cot
+              JOIN classrooms cr ON cr.id = cot.classroom_id
+             WHERE cot.offering_id IN
              <foreach collection="offeringIds" item="offeringId" open="(" separator="," close=")">
                #{offeringId}
              </foreach>
-             ORDER BY offering_id, day_of_week, start_section, start_week
+             ORDER BY cot.offering_id, cot.day_of_week, cot.start_section, cot.start_week
             </script>
             """)
     List<Map<String, Object>> offeringTimes(@Param("offeringIds") List<Long> offeringIds);

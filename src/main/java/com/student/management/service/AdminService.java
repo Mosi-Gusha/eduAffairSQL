@@ -604,6 +604,8 @@ public class AdminService {
                 row.put("startWeek", first.get("startWeek"));
                 row.put("endWeek", first.get("endWeek"));
                 row.put("weekType", first.get("weekType"));
+                row.put("classroomId", first.get("classroomId"));
+                row.put("classroom", first.get("classroom"));
             }
         }
         return rows;
@@ -672,7 +674,7 @@ public class AdminService {
 
     private void validateOfferingResourceConflicts(Long offeringId, CreateOfferingRequest request) {
         int conflicts = adminMapper.countOfferingResourceConflicts(offeringId, request.semesterId(),
-                request.teacherId(), request.classroomId(), request.times());
+                request.teacherId(), request.times());
         if (conflicts > 0) {
             throw new ApiException(400, "同一时间教师或教室已有课程安排");
         }

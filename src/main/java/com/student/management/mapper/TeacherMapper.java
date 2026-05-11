@@ -20,14 +20,12 @@ public interface TeacherMapper {
                      WHEN CURDATE() BETWEEN s.start_date AND s.end_date THEN 'active'
                      ELSE 'archived'
                    END AS semesterStatus,
-                   u.display_name AS teacherName,
-                   CONCAT(cr.building, cr.room_no) AS classroom
+                   u.display_name AS teacherName
               FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN semesters s ON s.id = co.semester_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
-              JOIN classrooms cr ON cr.id = co.classroom_id
              WHERE co.teacher_id = #{teacherId}
              ORDER BY s.start_date DESC, co.id
             """)
@@ -42,19 +40,17 @@ public interface TeacherMapper {
                      WHEN CURDATE() BETWEEN s.start_date AND s.end_date THEN 'active'
                      ELSE 'archived'
                    END AS semesterStatus,
-                   CONCAT(cr.building, cr.room_no) AS classroom,
                    COUNT(e.id) AS studentCount,
                    COUNT(g.id) AS gradedCount,
                    COALESCE(SUM(CASE WHEN g.final_score IS NULL THEN 1 ELSE 0 END), 0) AS missingGradeCount
               FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN semesters s ON s.id = co.semester_id
-              JOIN classrooms cr ON cr.id = co.classroom_id
               LEFT JOIN enrollments e ON e.offering_id = co.id AND e.status = 'selected'
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE co.teacher_id = #{teacherId}
              GROUP BY co.id, co.capacity, co.selected_count, co.status, c.code, c.name, c.credit,
-                      s.id, s.name, s.start_date, s.end_date, cr.building, cr.room_no
+                      s.id, s.name, s.start_date, s.end_date
              ORDER BY s.start_date DESC, co.id
             """)
     List<Map<String, Object>> gradeCourses(@Param("teacherId") Long teacherId);

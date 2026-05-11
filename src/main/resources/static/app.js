@@ -204,6 +204,8 @@ function offeringTimes(row) {
   if (row?.dayOfWeek) {
     return [{
       dayOfWeek: row.dayOfWeek,
+      classroomId: row.classroomId,
+      classroom: row.classroom,
       startSection: row.startSection,
       endSection: row.endSection,
       startWeek: row.startWeek || 1,
@@ -223,7 +225,8 @@ function courseTime(row) {
 function timeText(time) {
   const weekRange = `${text(time.startWeek || 1)}-${text(time.endWeek || 16)}周`;
   const type = weekTypeText[time.weekType] || time.weekType || '全部';
-  return `${text(dayNames[time.dayOfWeek])} ${text(time.startSection)}-${text(time.endSection)}节 · ${weekRange} · ${text(type)}`;
+  const room = time.classroom ? ` · ${text(time.classroom)}` : '';
+  return `${text(dayNames[time.dayOfWeek])} ${text(time.startSection)}-${text(time.endSection)}节 · ${weekRange} · ${text(type)}${room}`;
 }
 
 function weekTypeOptions(selected = 'all') {
@@ -252,8 +255,10 @@ function offeringTimesEditor(times = []) {
 }
 
 function offeringTimeFields(time = {}) {
+  const catalog = state.adminCatalog || {};
   return `
     <div class="time-segment" data-time-segment>
+      <label><span>教室</span><select name="timeClassroomId" required>${options(catalog.classrooms || [], 'id', (item) => `${item.building}${item.roomNo}`, time.classroomId)}</select></label>
       <label><span>星期</span><select name="timeDayOfWeek" required>${dayOptions(time.dayOfWeek || 1)}</select></label>
       <label><span>开始节</span><input name="timeStartSection" type="number" min="1" max="12" value="${text(time.startSection || 1)}" required></label>
       <label><span>结束节</span><input name="timeEndSection" type="number" min="1" max="12" value="${text(time.endSection || 2)}" required></label>
@@ -318,12 +323,13 @@ function asNumberFields(data, fields) {
 
 function collectOfferingPayload(form) {
   const raw = formObject(form);
-  const data = asNumberFields(raw, ['courseId', 'semesterId', 'teacherId', 'classroomId', 'capacity']);
+  const data = asNumberFields(raw, ['courseId', 'semesterId', 'teacherId', 'capacity']);
   data.examRatio = raw.examRatio != null ? Number(raw.examRatio) / 100 : null;
-  ['timeDayOfWeek', 'timeStartSection', 'timeEndSection', 'timeStartWeek', 'timeEndWeek', 'timeWeekType'].forEach((field) => {
+  ['timeClassroomId', 'timeDayOfWeek', 'timeStartSection', 'timeEndSection', 'timeStartWeek', 'timeEndWeek', 'timeWeekType'].forEach((field) => {
     delete data[field];
   });
   data.times = Array.from(form.querySelectorAll('[data-time-segment]')).map((segment) => ({
+    classroomId: Number(segment.querySelector('[name="timeClassroomId"]').value),
     dayOfWeek: Number(segment.querySelector('[name="timeDayOfWeek"]').value),
     startSection: Number(segment.querySelector('[name="timeStartSection"]').value),
     endSection: Number(segment.querySelector('[name="timeEndSection"]').value),
@@ -726,13 +732,12 @@ function offeringTable(rows, adminActions = false) {
   return `
     <div class="table-wrap">
       <table>
-        <thead><tr><th class="col-course">课程</th><th class="col-name">教师</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">容量</th><th class="col-status">状态</th>${adminActions ? '<th class="col-actions">操作</th>' : ''}</tr></thead>
+        <thead><tr><th class="col-course">课程</th><th class="col-name">教师</th><th class="col-time">时间</th><th class="col-capacity">容量</th><th class="col-status">状态</th>${adminActions ? '<th class="col-actions">操作</th>' : ''}</tr></thead>
         <tbody>${rows.map((row) => `
           <tr>
             <td><b>${text(row.courseCode)}</b> ${text(row.courseName)}</td>
             <td>${text(row.teacherName)}</td>
             <td>${courseTime(row)}</td>
-            <td>${text(row.classroom)}</td>
             <td>${number(row.selectedCount)}/${number(row.capacity)}</td>
             <td>${badge(row.status)}</td>
             ${adminActions ? `<td><div class="row-actions"><button class="btn" data-action="edit-offering" data-id="${row.id}">修改</button><button class="btn" data-action="course-roster" data-id="${row.id}">选课名单</button><button class="btn btn-danger" data-action="offering-delete" data-id="${row.id}">删除</button></div></td>` : ''}
@@ -800,7 +805,6 @@ function renderOfferingModal() {
             <input type="hidden" name="semesterId" value="${text(currentSemester?.id || '')}">
             <label class="field"><span>学期</span><input value="${text(currentSemester?.name || '暂无可用学期')}" disabled></label>
             <label class="field"><span>教师</span><select name="teacherId" required>${options(catalog.teachers, 'id', (item) => `${item.teacherNo} ${item.name}`)}</select></label>
-            <label class="field"><span>教室</span><select name="classroomId" required>${options(catalog.classrooms, 'id', (item) => `${item.building}${item.roomNo}`)}</select></label>
             ${offeringTimesEditor()}
             <label class="field"><span>容量</span><input name="capacity" type="number" min="1" required></label>
             <label class="field"><span>期末占比(%)</span><input name="examRatio" type="number" min="0" max="100" step="1" placeholder="60"></label>
@@ -835,7 +839,6 @@ function renderEditOfferingModal(offeringId) {
             <label class="field"><span>课程</span><input value="${text(offering.courseCode)} ${text(offering.courseName)}" disabled></label>
             <label class="field"><span>学期</span><input value="${text(currentSemester?.name || '')}" disabled></label>
             <label class="field"><span>教师</span><select name="teacherId" required>${options(catalog.teachers, 'id', (item) => `${item.teacherNo} ${item.name}`, offering.teacherId)}</select></label>
-            <label class="field"><span>教室</span><select name="classroomId" required>${options(catalog.classrooms, 'id', (item) => `${item.building}${item.roomNo}`, offering.classroomId)}</select></label>
             ${offeringTimesEditor(offeringTimes(offering))}
             <label class="field"><span>容量</span><input name="capacity" type="number" min="${minCapacity}" value="${text(offering.capacity)}" required></label>
             <label class="field"><span>期末占比(%)</span><input name="examRatio" type="number" min="0" max="100" step="1" value="${examPct}" placeholder="60"></label>
@@ -990,12 +993,11 @@ function renderTeacherOfferingsModal(teacherId) {
         <div class="modal-body">
           ${data.length ? `
             <div class="table-wrap"><table>
-              <thead><tr><th class="col-course">课程</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">容量</th><th class="col-ratio">期末占比</th></tr></thead>
+              <thead><tr><th class="col-course">课程</th><th class="col-time">时间</th><th class="col-capacity">容量</th><th class="col-ratio">期末占比</th></tr></thead>
               <tbody>${data.map((row) => `
                 <tr>
                   <td><b>${text(row.courseCode)}</b> ${text(row.courseName)}</td>
                   <td>${courseTime(row)}</td>
-                  <td>${text(row.classroom)}</td>
                   <td>${number(row.selectedCount)}/${number(row.capacity)}</td>
                   <td>${number(Math.round(Number(row.examRatio) * 100))}%</td>
                 </tr>
@@ -1020,13 +1022,12 @@ function renderStudentEnrollmentsModal(studentId) {
         <div class="modal-body">
           ${data.length ? `
             <div class="table-wrap"><table>
-              <thead><tr><th class="col-course">课程</th><th class="col-name">教师</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">容量</th><th class="col-ratio">期末占比</th></tr></thead>
+              <thead><tr><th class="col-course">课程</th><th class="col-name">教师</th><th class="col-time">时间</th><th class="col-capacity">容量</th><th class="col-ratio">期末占比</th></tr></thead>
               <tbody>${data.map((row) => `
                 <tr>
                   <td><b>${text(row.courseCode)}</b> ${text(row.courseName)}</td>
                   <td>${text(row.teacherName)}</td>
                   <td>${courseTime(row)}</td>
-                  <td>${text(row.classroom)}</td>
                   <td>${number(row.selectedCount)}/${number(row.capacity)}</td>
                   <td>${number(Math.round(Number(row.examRatio) * 100))}%</td>
                 </tr>
@@ -1161,13 +1162,12 @@ function renderTeacherCourses() {
       <div class="panel-header"><div><h2>任课课程</h2></div></div>
       ${courses.length ? `
         <div class="table-wrap"><table>
-          <thead><tr><th class="col-term">学期</th><th class="col-course">课程</th><th class="col-time">时间</th><th class="col-room">教室</th><th class="col-capacity">人数</th><th class="col-status">状态</th><th class="col-actions">操作</th></tr></thead>
+          <thead><tr><th class="col-term">学期</th><th class="col-course">课程</th><th class="col-time">时间</th><th class="col-capacity">人数</th><th class="col-status">状态</th><th class="col-actions">操作</th></tr></thead>
           <tbody>${courses.map((row) => `
             <tr>
               <td>${text(row.semesterName)}</td>
               <td><b>${text(row.courseCode)}</b> ${text(row.courseName)}</td>
               <td>${courseTime(row)}</td>
-              <td>${text(row.classroom)}</td>
               <td>${number(row.selectedCount)}/${number(row.capacity)}</td>
               <td>${badge(row.status)}</td>
               <td><button class="btn" data-action="teacher-roster" data-id="${row.id}">查看名单</button></td>
@@ -1255,7 +1255,6 @@ function courseCard(row) {
           <span>${number(row.credit)} 学分</span>
           <span>${text(row.teacherName)}</span>
           <span>${courseTime(row)}</span>
-          <span>${text(row.classroom)}</span>
           <span>${number(row.selectedCount)}/${number(row.capacity)}</span>
           <span>${reason}</span>
         </div>
@@ -2144,7 +2143,7 @@ function renderStudentDashboard() {
           <div class="list-stack">
             ${scheduleRows.slice(0, 5).map((course) => `
               <div class="list-item">
-          <div><strong>${text(course.courseName)}</strong><p>${courseTime(course)} · ${text(course.classroom)}</p></div>
+          <div><strong>${text(course.courseName)}</strong><p>${courseTime(course)}</p></div>
                 <span class="status-tag">${text(course.teacherName)}</span>
               </div>
             `).join('') || empty('暂无已选课程')}

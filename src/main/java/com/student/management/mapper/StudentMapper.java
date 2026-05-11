@@ -17,7 +17,7 @@ public interface StudentMapper {
     @Select("""
             <script>
             SELECT co.id, c.code AS courseCode, c.name AS courseName, c.credit,
-                   u.display_name AS teacherName, CONCAT(cr.building, cr.room_no) AS classroom,
+                   u.display_name AS teacherName,
                    co.capacity, co.selected_count AS selectedCount, co.status,
                    e.id AS enrollmentId, e.status AS enrollmentStatus,
                    EXISTS (
@@ -35,15 +35,20 @@ public interface StudentMapper {
               JOIN courses c ON c.id = co.course_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
-              JOIN classrooms cr ON cr.id = co.classroom_id
               LEFT JOIN enrollments e ON e.offering_id = co.id AND e.student_id = #{studentId}
              WHERE co.semester_id = #{semesterId}
                AND co.status = 'selecting'
              <if test="keyword != null and keyword != ''">
                AND (c.code LIKE CONCAT('%', #{keyword}, '%')
-                    OR c.name LIKE CONCAT('%', #{keyword}, '%')
-                    OR u.display_name LIKE CONCAT('%', #{keyword}, '%')
-                    OR CONCAT(cr.building, cr.room_no) LIKE CONCAT('%', #{keyword}, '%'))
+                   OR c.name LIKE CONCAT('%', #{keyword}, '%')
+                   OR u.display_name LIKE CONCAT('%', #{keyword}, '%')
+                   OR EXISTS (
+                        SELECT 1
+                          FROM course_offering_times cot
+                          JOIN classrooms cr ON cr.id = cot.classroom_id
+                         WHERE cot.offering_id = co.id
+                           AND CONCAT(cr.building, cr.room_no) LIKE CONCAT('%', #{keyword}, '%')
+                   ))
              </if>
              ORDER BY co.id
             </script>
@@ -72,14 +77,12 @@ public interface StudentMapper {
 
     @Select("""
             SELECT e.id AS enrollmentId, c.code AS courseCode, c.name AS courseName, c.credit,
-                   co.id AS offeringId, u.display_name AS teacherName,
-                   CONCAT(cr.building, cr.room_no) AS classroom
+                   co.id AS offeringId, u.display_name AS teacherName
               FROM enrollments e
               JOIN course_offerings co ON co.id = e.offering_id
               JOIN courses c ON c.id = co.course_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
-              JOIN classrooms cr ON cr.id = co.classroom_id
               JOIN semesters s ON s.id = co.semester_id
              WHERE s.id = (
             """ + CURRENT_SEMESTER_ID_SQL + """

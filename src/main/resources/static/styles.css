@@ -1105,7 +1105,7 @@ textarea:focus-visible,
 
 .time-segment {
   display: grid;
-  grid-template-columns: repeat(6, minmax(72px, 1fr)) auto;
+  grid-template-columns: repeat(7, minmax(72px, 1fr)) auto;
   gap: 8px;
   align-items: end;
   padding: 10px;
