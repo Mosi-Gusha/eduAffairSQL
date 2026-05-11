@@ -64,6 +64,14 @@ public interface StudentMapper {
             UPDATE enrollments
                SET status = 'dropped'
              WHERE id = #{enrollmentId} AND student_id = #{studentId} AND status = 'selected'
+               AND EXISTS (
+                    SELECT 1
+                      FROM course_offerings co
+                      JOIN semester_active_phases sap
+                        ON sap.semester_id = co.semester_id
+                       AND sap.phase = 'selection'
+                     WHERE co.id = enrollments.offering_id
+               )
             """)
     int dropCourse(@Param("studentId") Long studentId, @Param("enrollmentId") Long enrollmentId);
 
@@ -76,21 +84,31 @@ public interface StudentMapper {
     boolean isEnrollmentGraded(@Param("enrollmentId") Long enrollmentId);
 
     @Select("""
+            <script>
             SELECT e.id AS enrollmentId, c.code AS courseCode, c.name AS courseName, c.credit,
-                   co.id AS offeringId, u.display_name AS teacherName
+                   co.id AS offeringId, u.display_name AS teacherName,
+                   s.id AS semesterId, s.name AS semesterName
               FROM enrollments e
               JOIN course_offerings co ON co.id = e.offering_id
               JOIN courses c ON c.id = co.course_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
               JOIN semesters s ON s.id = co.semester_id
-             WHERE s.id = (
+             WHERE e.student_id = #{studentId} AND e.status = 'selected'
+             <choose>
+             <when test="semesterId != null">
+               AND s.id = #{semesterId}
+             </when>
+             <otherwise>
+               AND s.id = (
             """ + CURRENT_SEMESTER_ID_SQL + """
                    )
-               AND e.student_id = #{studentId} AND e.status = 'selected'
+             </otherwise>
+             </choose>
              ORDER BY co.id
+            </script>
             """)
-    List<Map<String, Object>> schedule(@Param("studentId") Long studentId);
+    List<Map<String, Object>> schedule(@Param("studentId") Long studentId, @Param("semesterId") Long semesterId);
 
     @Select("""
             SELECT c.code AS courseCode, c.name AS courseName, c.credit,

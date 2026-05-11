@@ -624,7 +624,7 @@ textarea:focus-visible,
 
 .term-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: var(--rhythm-md);
   margin-bottom: var(--rhythm-lg);
 }
@@ -724,7 +724,7 @@ textarea:focus-visible,
 }
 
 .admin-metrics {
-  grid-template-columns: repeat(4, minmax(112px, 1fr));
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
   gap: var(--rhythm-sm);
 }
 
@@ -1039,6 +1039,18 @@ textarea:focus-visible,
   font-size: 18px;
 }
 
+.panel-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.semester-select {
+  width: min(260px, 42vw);
+  min-height: 36px;
+}
+
 .panel-header p {
   margin: 6px 0 0;
   color: var(--muted);
@@ -1244,6 +1256,11 @@ tbody tr:last-child td {
   width: 240px;
 }
 
+.col-semester-action,
+.col-phase-action {
+  width: 138px;
+}
+
 .table-wrap table:has(.col-email) {
   min-width: 980px;
 }
@@ -1254,6 +1271,10 @@ tbody tr:last-child td {
 
 .table-wrap table:has(.col-actions) {
   min-width: 1120px;
+}
+
+.table-wrap table:has(.col-phase-action) {
+  min-width: 1160px;
 }
 
 .table-wrap table:has(.col-time):has(.col-actions) {
@@ -1781,6 +1802,18 @@ tbody tr:last-child td {
 .modal-header h2 {
   margin: 0;
   font-size: 18px;
+}
+
+.modal-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.modal-title-row .semester-select {
+  width: min(300px, 48vw);
 }
 
 .modal-body {
@@ -2481,7 +2514,7 @@ button.campus-card {
   }
 
   .admin-metrics {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .login-cards,

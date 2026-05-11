@@ -22,6 +22,8 @@ public class CommonController {
     public ApiResponse<Map<String, Object>> landing() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("currentSemester", commonMapper.currentSemester());
+        data.put("selectionSemester", commonMapper.selectionSemester());
+        data.put("gradingSemester", commonMapper.gradingSemester());
         data.put("notices", commonMapper.listRecentNotices("student", 6));
         return ApiResponse.ok(data);
     }
@@ -31,25 +33,15 @@ public class CommonController {
     public ApiResponse<Map<String, Object>> catalog(SessionUser user) {
         Map<String, Object> data = new LinkedHashMap<>();
         Map<String, Object> currentSemester = commonMapper.currentSemester();
+        Map<String, Object> selectionSemester = commonMapper.selectionSemester();
+        Map<String, Object> gradingSemester = commonMapper.gradingSemester();
         data.put("semesters", commonMapper.semesters());
         data.put("currentSemester", currentSemester);
-        data.put("selectionOpen", isSelectionOpen(currentSemester));
+        data.put("selectionSemester", selectionSemester);
+        data.put("gradingSemester", gradingSemester);
+        data.put("selectionOpen", selectionSemester != null);
+        data.put("gradingOpen", gradingSemester != null);
         data.put("notices", commonMapper.listNotices(user.role()));
         return ApiResponse.ok(data);
-    }
-
-    private boolean isSelectionOpen(Map<String, Object> semester) {
-        if (semester == null) return false;
-        String startDate = String.valueOf(semester.getOrDefault("startDate", ""));
-        String endDate = String.valueOf(semester.getOrDefault("endDate", ""));
-        if (startDate.isEmpty() || endDate.isEmpty()) return false;
-        try {
-            java.time.LocalDate now = java.time.LocalDate.now();
-            java.time.LocalDate start = java.time.LocalDate.parse(startDate);
-            java.time.LocalDate end = java.time.LocalDate.parse(endDate);
-            return !now.isBefore(start) && !now.isAfter(end);
-        } catch (Exception e) {
-            return false;
-        }
     }
 }

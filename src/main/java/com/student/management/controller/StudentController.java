@@ -43,8 +43,9 @@ public class StudentController {
     }
 
     @GetMapping("/schedule")
-    public ApiResponse<List<Map<String, Object>>> schedule(SessionUser user) {
-        return ApiResponse.ok(studentService.schedule(user));
+    public ApiResponse<List<Map<String, Object>>> schedule(SessionUser user,
+                                                           @RequestParam(required = false) Long semesterId) {
+        return ApiResponse.ok(studentService.schedule(user, semesterId));
     }
 
     @GetMapping("/grades")

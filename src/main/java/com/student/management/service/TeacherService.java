@@ -52,6 +52,12 @@ public class TeacherService {
                 () -> withOfferingTimes(teacherMapper.courses(teacherId), "id"));
     }
 
+    public List<Map<String, Object>> schedule(SessionUser user) {
+        Long teacherId = teacherId(user);
+        return cache.get("teacher:" + teacherId + ":schedule", LIST_TYPE,
+                () -> withOfferingTimes(teacherMapper.schedule(teacherId), "id"));
+    }
+
     public List<Map<String, Object>> gradeCourses(SessionUser user) {
         Long teacherId = teacherId(user);
         return cache.get("teacher:" + teacherId + ":grade-courses", LIST_TYPE,
@@ -72,7 +78,10 @@ public class TeacherService {
 
     @Transactional
     public Map<String, Object> saveGrade(SessionUser user, GradeRequest request) {
-        ensureOwner(user, request.enrollmentId());
+        Map<String, Object> row = ensureOwner(user, request.enrollmentId());
+        if (!MapUtil.booleanValue(row, "gradingOpen")) {
+            throw new ApiException(400, "当前未开放该学期登分，不能保存成绩");
+        }
         teacherMapper.upsertGrade(request.enrollmentId(), request.usualScore(), request.examScore(), user.id());
         clearTeachingCaches();
         return AdminService.message("成绩已保存");

@@ -88,6 +88,8 @@ public interface AdminMapper {
             )
             SELECT s.id, s.name, s.start_date AS startDate, s.end_date AS endDate,
                    s.max_credit AS maxCredit,
+                   selection_phase.semester_id IS NOT NULL AS selectionOpen,
+                   grading_phase.semester_id IS NOT NULL AS gradingOpen,
                    CASE
                      WHEN s.start_date > CURDATE() THEN 'not_started'
                      WHEN CURDATE() BETWEEN s.start_date AND s.end_date THEN 'active'
@@ -95,6 +97,10 @@ public interface AdminMapper {
                    END AS status,
                    s.id = (SELECT id FROM current_semester) AS isCurrent
               FROM semesters s
+              LEFT JOIN semester_active_phases selection_phase
+                ON selection_phase.semester_id = s.id AND selection_phase.phase = 'selection'
+              LEFT JOIN semester_active_phases grading_phase
+                ON grading_phase.semester_id = s.id AND grading_phase.phase = 'grading'
              ORDER BY s.start_date DESC
             """)
     List<Map<String, Object>> semesters();
@@ -105,8 +111,22 @@ public interface AdminMapper {
             """)
     int insertSemester(SemesterRequest request);
 
+    @Select("SELECT id FROM semesters WHERE name = #{name}")
+    Long semesterIdByName(@Param("name") String name);
+
     @Select("SELECT COUNT(*) FROM semesters WHERE id = #{semesterId}")
     int countSemesterById(@Param("semesterId") Long semesterId);
+
+    @Select("""
+            SELECT CASE
+                     WHEN start_date > CURDATE() THEN 'not_started'
+                     WHEN CURDATE() BETWEEN start_date AND end_date THEN 'active'
+                     ELSE 'archived'
+                   END
+              FROM semesters
+             WHERE id = #{semesterId}
+            """)
+    String semesterStatusById(@Param("semesterId") Long semesterId);
 
     @Select("""
             SELECT COUNT(*)
@@ -128,6 +148,52 @@ public interface AdminMapper {
              WHERE id = #{semesterId}
             """)
     int updateSemester(@Param("semesterId") Long semesterId, @Param("request") SemesterRequest request);
+
+    @Select("SELECT COUNT(*) FROM semester_active_phases WHERE semester_id = #{semesterId} AND phase = 'selection'")
+    int countOpenSelectionBySemester(@Param("semesterId") Long semesterId);
+
+    @Select("SELECT COUNT(*) FROM semester_active_phases WHERE semester_id = #{semesterId} AND phase = 'grading'")
+    int countOpenGradingBySemester(@Param("semesterId") Long semesterId);
+
+    @Update("DELETE FROM semester_active_phases WHERE phase = 'selection'")
+    int closeAllSelectionSemesters();
+
+    @Update("DELETE FROM semester_active_phases WHERE phase = 'grading'")
+    int closeAllGradingSemesters();
+
+    @Update("""
+            <script>
+            <choose>
+              <when test="open">
+                INSERT INTO semester_active_phases(phase, semester_id)
+                VALUES('selection', #{semesterId})
+                ON DUPLICATE KEY UPDATE semester_id = VALUES(semester_id)
+              </when>
+              <otherwise>
+                DELETE FROM semester_active_phases
+                 WHERE phase = 'selection' AND semester_id = #{semesterId}
+              </otherwise>
+            </choose>
+            </script>
+            """)
+    int updateSemesterSelectionOpen(@Param("semesterId") Long semesterId, @Param("open") boolean open);
+
+    @Update("""
+            <script>
+            <choose>
+              <when test="open">
+                INSERT INTO semester_active_phases(phase, semester_id)
+                VALUES('grading', #{semesterId})
+                ON DUPLICATE KEY UPDATE semester_id = VALUES(semester_id)
+              </when>
+              <otherwise>
+                DELETE FROM semester_active_phases
+                 WHERE phase = 'grading' AND semester_id = #{semesterId}
+              </otherwise>
+            </choose>
+            </script>
+            """)
+    int updateSemesterGradingOpen(@Param("semesterId") Long semesterId, @Param("open") boolean open);
 
     @Select("SELECT id, name, phone FROM departments ORDER BY id")
     List<Map<String, Object>> departments();
@@ -300,7 +366,7 @@ public interface AdminMapper {
               JOIN semesters s ON s.id = co.semester_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
-             WHERE co.status = 'selecting'
+             WHERE 1 = 1
              <if test="keyword != null and keyword != ''">
                AND (c.code LIKE CONCAT('%', #{keyword}, '%')
                     OR c.name LIKE CONCAT('%', #{keyword}, '%')
@@ -314,15 +380,22 @@ public interface AdminMapper {
                             AND CONCAT(cr.building, cr.room_no) LIKE CONCAT('%', #{keyword}, '%')
                     ))
              </if>
-             <if test="currentOnly">
+             <choose>
+             <when test="semesterId != null">
+               AND s.id = #{semesterId}
+             </when>
+             <when test="currentOnly">
                AND s.id = (
             """ + CURRENT_SEMESTER_ID_SQL + """
                )
-             </if>
+             </when>
+             </choose>
              ORDER BY s.start_date DESC, co.id
             </script>
             """)
-    List<Map<String, Object>> listOfferings(@Param("keyword") String keyword, @Param("currentOnly") boolean currentOnly);
+    List<Map<String, Object>> listOfferings(@Param("keyword") String keyword,
+                                            @Param("currentOnly") boolean currentOnly,
+                                            @Param("semesterId") Long semesterId);
 
     @Insert("""
             INSERT INTO course_offerings(course_id, semester_id, teacher_id,
@@ -537,26 +610,38 @@ public interface AdminMapper {
     int deleteNotice(@Param("noticeId") Long noticeId);
 
     @Select("""
+            <script>
             SELECT co.id, c.code AS courseCode, c.name AS courseName,
                    co.capacity, co.selected_count AS selectedCount,
-                   co.exam_ratio AS examRatio
+                   co.exam_ratio AS examRatio,
+                   s.id AS semesterId, s.name AS semesterName
               FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN semesters s ON s.id = co.semester_id
              WHERE co.teacher_id = #{teacherId}
+             <choose>
+             <when test="semesterId != null">
+               AND s.id = #{semesterId}
+             </when>
+             <otherwise>
                AND s.id = (
             """ + CURRENT_SEMESTER_ID_SQL + """
                    )
-               AND co.status = 'selecting'
+             </otherwise>
+             </choose>
              ORDER BY co.id
+            </script>
             """)
-    List<Map<String, Object>> teacherCurrentOfferings(@Param("teacherId") Long teacherId);
+    List<Map<String, Object>> teacherOfferings(@Param("teacherId") Long teacherId,
+                                               @Param("semesterId") Long semesterId);
 
     @Select("""
+            <script>
             SELECT co.id AS offeringId, c.code AS courseCode, c.name AS courseName,
                    co.capacity, co.selected_count AS selectedCount,
                    co.exam_ratio AS examRatio,
-                   u.display_name AS teacherName
+                   u.display_name AS teacherName,
+                   s.id AS semesterId, s.name AS semesterName
               FROM enrollments e
               JOIN course_offering_stats co ON co.id = e.offering_id
               JOIN courses c ON c.id = co.course_id
@@ -565,10 +650,19 @@ public interface AdminMapper {
               JOIN users u ON u.id = t.user_id
              WHERE e.student_id = #{studentId}
                AND e.status = 'selected'
+             <choose>
+             <when test="semesterId != null">
+               AND s.id = #{semesterId}
+             </when>
+             <otherwise>
                AND s.id = (
             """ + CURRENT_SEMESTER_ID_SQL + """
                    )
+             </otherwise>
+             </choose>
              ORDER BY co.id
+            </script>
             """)
-    List<Map<String, Object>> studentCurrentEnrollments(@Param("studentId") Long studentId);
+    List<Map<String, Object>> studentEnrollmentsBySemester(@Param("studentId") Long studentId,
+                                                           @Param("semesterId") Long semesterId);
 }

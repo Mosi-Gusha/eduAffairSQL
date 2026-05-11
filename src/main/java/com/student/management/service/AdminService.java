@@ -49,16 +49,24 @@ public class AdminService {
     }
 
     public Map<String, Object> dashboard() {
+        Map<String, Object> selectionSemester = commonMapper.selectionSemester();
+        Map<String, Object> gradingSemester = commonMapper.gradingSemester();
         return mapOf(
                 "summary", List.of(
-                        item("系统用户", adminMapper.countUsers()),
-                        item("启用课程", adminMapper.countEnabledCourses()),
-                        item("开课计划", adminMapper.countOfferings()),
-                        item("有效选课", adminMapper.countSelectedEnrollments())
+                        item("学期选课开放状态", semesterPhaseText(selectionSemester, "选课中", "未开放选课")),
+                        item("教务登分开放状态", semesterPhaseText(gradingSemester, "登分中", "未开放登分"))
                 ),
                 "systemStatus", systemStatus(),
                 "notices", commonMapper.listRecentNotices("admin", 5)
         );
+    }
+
+    private String semesterPhaseText(Map<String, Object> semester, String suffix, String fallback) {
+        if (semester == null) {
+            return fallback;
+        }
+        String name = MapUtil.stringValue(semester, "name");
+        return (name == null || name.isBlank() ? "" : name) + suffix;
     }
 
     public List<Map<String, Object>> listUsers() {
@@ -206,6 +214,8 @@ public class AdminService {
     public Map<String, Object> catalog() {
         return cache.get("admin:catalog", MAP_TYPE, () -> {
             Map<String, Object> currentSemester = commonMapper.currentSemester();
+            Map<String, Object> selectionSemester = commonMapper.selectionSemester();
+            Map<String, Object> gradingSemester = commonMapper.gradingSemester();
             return mapOf(
                     "semesters", adminMapper.semesters(),
                     "departments", adminMapper.departments(),
@@ -214,14 +224,17 @@ public class AdminService {
                     "courses", adminMapper.courses(),
                     "classrooms", adminMapper.classrooms(),
                     "currentSemester", currentSemester,
-                    "selectionOpen", selectionOpen()
+                    "selectionSemester", selectionSemester,
+                    "gradingSemester", gradingSemester,
+                    "selectionOpen", selectionSemester != null,
+                    "gradingOpen", gradingSemester != null
             );
         });
     }
 
-    public List<Map<String, Object>> listOfferings(String keyword, boolean currentOnly) {
-        return cache.get("admin:offerings:" + currentOnly + ":" + cache.keyPart(keyword), LIST_TYPE,
-                () -> withOfferingTimes(adminMapper.listOfferings(keyword, currentOnly), "id"));
+    public List<Map<String, Object>> listOfferings(String keyword, boolean currentOnly, Long semesterId) {
+        return cache.get("admin:offerings:" + currentOnly + ":" + cache.keyPart(semesterId) + ":" + cache.keyPart(keyword), LIST_TYPE,
+                () -> withOfferingTimes(adminMapper.listOfferings(keyword, currentOnly, semesterId), "id"));
     }
 
     public List<Map<String, Object>> listCourses(String keyword) {
@@ -310,6 +323,52 @@ public class AdminService {
         }
         clearTeachingCaches();
         return message("学期信息已更新");
+    }
+
+    @Transactional
+    public Map<String, Object> startSemesterSelection(Long semesterId) {
+        ensureSemesterExists(semesterId);
+        if ("archived".equals(adminMapper.semesterStatusById(semesterId))) {
+            throw new ApiException(400, "已归档学期不能开始选课");
+        }
+        if (adminMapper.countOpenGradingBySemester(semesterId) > 0) {
+            throw new ApiException(400, "该学期正在登分，不能同时开放选课");
+        }
+        adminMapper.closeAllSelectionSemesters();
+        adminMapper.updateSemesterSelectionOpen(semesterId, true);
+        clearTeachingCaches();
+        return message("选课已开放");
+    }
+
+    @Transactional
+    public Map<String, Object> stopSemesterSelection(Long semesterId) {
+        ensureSemesterExists(semesterId);
+        adminMapper.updateSemesterSelectionOpen(semesterId, false);
+        clearTeachingCaches();
+        return message("选课已关闭");
+    }
+
+    @Transactional
+    public Map<String, Object> startSemesterGrading(Long semesterId) {
+        ensureSemesterExists(semesterId);
+        if ("not_started".equals(adminMapper.semesterStatusById(semesterId))) {
+            throw new ApiException(400, "未开始学期不能开始登分");
+        }
+        if (adminMapper.countOpenSelectionBySemester(semesterId) > 0) {
+            throw new ApiException(400, "该学期正在选课，不能同时开放登分");
+        }
+        adminMapper.closeAllGradingSemesters();
+        adminMapper.updateSemesterGradingOpen(semesterId, true);
+        clearTeachingCaches();
+        return message("登分已开放");
+    }
+
+    @Transactional
+    public Map<String, Object> stopSemesterGrading(Long semesterId) {
+        ensureSemesterExists(semesterId);
+        adminMapper.updateSemesterGradingOpen(semesterId, false);
+        clearTeachingCaches();
+        return message("登分已关闭");
     }
 
     public List<Map<String, Object>> enrollmentReport() {
@@ -529,34 +588,14 @@ public class AdminService {
         return String.format(Locale.ROOT, "%.1f / %.1f GB", used / gib, total / gib);
     }
 
-    private boolean selectionOpen() {
-        Map<String, Object> semester = commonMapper.currentSemester();
-        if (semester == null) {
-            return false;
-        }
-        String startDate = MapUtil.stringValue(semester, "startDate");
-        String endDate = MapUtil.stringValue(semester, "endDate");
-        if (startDate == null || endDate == null) {
-            return false;
-        }
-        try {
-            java.time.LocalDate now = java.time.LocalDate.now();
-            java.time.LocalDate start = java.time.LocalDate.parse(startDate);
-            java.time.LocalDate end = java.time.LocalDate.parse(endDate);
-            return !now.isBefore(start) && !now.isAfter(end);
-        } catch (Exception e) {
-            return false;
-        }
+    public List<Map<String, Object>> teacherOfferings(Long teacherId, Long semesterId) {
+        return cache.get("admin:teacher-offerings:" + teacherId + ":" + cache.keyPart(semesterId), LIST_TYPE,
+                () -> withOfferingTimes(adminMapper.teacherOfferings(teacherId, semesterId), "id"));
     }
 
-    public List<Map<String, Object>> teacherCurrentOfferings(Long teacherId) {
-        return cache.get("admin:teacher-offerings:" + teacherId, LIST_TYPE,
-                () -> withOfferingTimes(adminMapper.teacherCurrentOfferings(teacherId), "id"));
-    }
-
-    public List<Map<String, Object>> studentCurrentEnrollments(Long studentId) {
-        return cache.get("admin:student-enrollments:" + studentId, LIST_TYPE,
-                () -> withOfferingTimes(adminMapper.studentCurrentEnrollments(studentId), "offeringId"));
+    public List<Map<String, Object>> studentEnrollments(Long studentId, Long semesterId) {
+        return cache.get("admin:student-enrollments:" + studentId + ":" + cache.keyPart(semesterId), LIST_TYPE,
+                () -> withOfferingTimes(adminMapper.studentEnrollmentsBySemester(studentId, semesterId), "offeringId"));
     }
 
     private List<Map<String, Object>> withOfferingTimes(List<Map<String, Object>> rows, String idKey) {
@@ -625,6 +664,12 @@ public class AdminService {
         }
         if (adminMapper.countOverlappingSemesters(semesterId, request.startDate(), request.endDate()) > 0) {
             throw new ApiException(400, "学期日期范围不能与已有学期重叠");
+        }
+    }
+
+    private void ensureSemesterExists(Long semesterId) {
+        if (adminMapper.countSemesterById(semesterId) == 0) {
+            throw new ApiException(400, "学期不存在");
         }
     }
 

@@ -34,6 +34,7 @@ const navs = {
   teacher: [
     ['dashboard', '首页'],
     ['courses', '任课课程'],
+    ['teachingSchedule', '排课安排'],
     ['gradeEntry', '成绩登录'],
     ['noticeManage', '通知公告'],
     ['profile', '个人信息']
@@ -58,6 +59,7 @@ const routeTitles = {
   noticeManage: '通知发布',
   profile: '个人信息',
   courses: '任课课程',
+  teachingSchedule: '排课安排',
   gradeEntry: '成绩登录',
   courseSelect: '在线选课',
   selectedCourses: '我的课表',
@@ -78,7 +80,11 @@ const state = {
   selected: {
     adminRosterOfferingId: null,
     gradeOfferingId: null,
-    transcriptSemesterId: 'all'
+    transcriptSemesterId: 'all',
+    offeringSemesterId: null,
+    teacherOfferingSemesterId: null,
+    studentEnrollmentSemesterId: null,
+    scheduleSemesterId: null
   },
   filters: {
     teacherKeyword: '',
@@ -398,7 +404,10 @@ async function loadRoute(force = false) {
     } else if (route === 'courseCatalog') {
       state.routeData.adminCourses = await api(`/api/admin/courses?keyword=${encodeURIComponent(state.filters.adminCourseKeyword || '')}`);
     } else if (route === 'courseManage') {
-      state.routeData.offerings = await api(`/api/admin/offerings?currentOnly=true&keyword=${encodeURIComponent(state.filters.offeringKeyword || '')}`);
+      const semesterId = ensureAdminSemesterSelection('offeringSemesterId');
+      const params = new URLSearchParams({ keyword: state.filters.offeringKeyword || '' });
+      if (semesterId) params.set('semesterId', semesterId);
+      state.routeData.offerings = await api(`/api/admin/offerings?${params.toString()}`);
     } else if (route === 'studentTeachingSearch') {
     return;
   }
@@ -409,10 +418,18 @@ async function loadRoute(force = false) {
     if (route === 'courses') {
       state.routeData.teacherCourses = await api('/api/teacher/courses');
     }
+    if (route === 'teachingSchedule') {
+      state.routeData.teacherSchedule = await api('/api/teacher/schedule');
+    }
     if (route === 'gradeEntry') {
       state.routeData.teacherGradeCourses = await api('/api/teacher/grade-courses');
       const gradable = state.routeData.teacherGradeCourses || [];
-      if (gradable.length && !gradable.some((item) => String(item.id) === String(state.selected.gradeOfferingId))) {
+      if (!gradable.length) {
+        state.selected.gradeOfferingId = null;
+        state.routeData.gradeRoster = [];
+        return;
+      }
+      if (!gradable.some((item) => String(item.id) === String(state.selected.gradeOfferingId))) {
         state.selected.gradeOfferingId = String(gradable[0].id);
       }
       if (state.selected.gradeOfferingId) {
@@ -426,7 +443,9 @@ async function loadRoute(force = false) {
 
   if (role === 'student') {
     if (studentSelectedCreditRoutes.has(route)) {
-      state.routeData.schedule = await api('/api/student/schedule');
+      const semesterId = route === 'selectedCourses' ? ensureCatalogSemesterSelection('scheduleSemesterId') : '';
+      const query = semesterId ? `?semesterId=${encodeURIComponent(semesterId)}` : '';
+      state.routeData.schedule = await api(`/api/student/schedule${query}`);
     }
     if (route === 'courseSelect') {
       state.routeData.studentOfferings = await api(`/api/student/offerings?keyword=${encodeURIComponent(state.filters.courseKeyword || '')}`);
@@ -477,21 +496,42 @@ function topbarTerm() {
 
 function termStrip() {
   const term = state.catalog?.currentSemester;
-  const selectionOpen = state.catalog?.selectionOpen;
+  const selectionSemester = state.catalog?.selectionSemester;
+  const gradingSemester = state.catalog?.gradingSemester;
+  const role = state.user?.role;
+  const creditLabel = state.route === 'selectedCourses' ? '所选学期已选学分' : '本学期已选学分';
   const selectedCredits = state.user?.role === 'student' && studentSelectedCreditRoutes.has(state.route)
-    ? `<div class="term-item"><span>本学期已选学分</span><strong>${creditNumber(selectedTermCredits())} 学分</strong></div>`
+    ? `<div class="term-item"><span>${creditLabel}</span><strong>${creditNumber(selectedTermCredits())} 学分</strong></div>`
+    : '';
+  const selectionStatus = role !== 'teacher'
+    ? `<div class="term-item"><span>选课状态</span><strong>${selectionSemester ? `${text(selectionSemester.name)}选课中` : '未开放选课'}</strong></div>`
+    : '';
+  const gradingStatus = role !== 'student'
+    ? `<div class="term-item"><span>登分状态</span><strong>${gradingSemester ? `${text(gradingSemester.name)}登分中` : '未开放登分'}</strong></div>`
     : '';
   return `
     <section class="term-strip">
       <div class="term-item"><span>当前学期</span><strong>${text(term?.name)}</strong></div>
       <div class="term-item"><span>学期日期</span><strong>${text(dateRange(term?.startDate, term?.endDate))}</strong></div>
-      <div class="term-item"><span>选课状态</span><strong>${selectionOpen ? '选课开放中' : '不在选课时间内'}</strong></div>
+      ${selectionStatus}
+      ${gradingStatus}
       ${selectedCredits}
     </section>
   `;
 }
 
 function selectedTermCredits() {
+  if (state.route === 'courseSelect') {
+    const seen = new Set();
+    return (state.routeData.studentOfferings?.rows || []).reduce((sum, row) => {
+      if (row.enrollmentStatus !== 'selected') return sum;
+      const key = row.enrollmentId || row.id;
+      if (seen.has(key)) return sum;
+      seen.add(key);
+      const credit = Number(row.credit || 0);
+      return Number.isFinite(credit) ? sum + credit : sum;
+    }, 0);
+  }
   const seen = new Set();
   return (state.routeData.schedule || []).reduce((sum, row) => {
     const key = row.enrollmentId || `${row.courseCode}-${row.courseName}`;
@@ -597,16 +637,18 @@ function renderAdminRoute() {
 function renderSemesterAdmin() {
   const catalog = state.adminCatalog || {};
   const semesters = catalog.semesters || [];
-  const current = catalog.currentSemester;
   return `
     <div class="page-grid">
       <section class="panel">
         <div class="panel-header">
-          <div><h2>学期管理</h2><p>当前学期由系统日期自动判断：优先使用进行中的学期，假期中使用最近将开学的学期。</p></div>
+          <div><h2>学期管理</h2></div>
+          <div class="panel-actions">
+            <button class="btn btn-primary" data-action="open-create-semester-modal">新建学期</button>
+          </div>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th class="col-term">学期</th><th class="col-date">日期</th><th class="col-credit">最大学分</th><th class="col-status">状态</th><th class="col-current">当前</th></tr></thead>
+            <thead><tr><th class="col-term">学期</th><th class="col-date">日期</th><th class="col-credit">最大学分</th><th class="col-status">状态</th><th class="col-semester-action">编辑学期</th><th class="col-phase-action">开始/结束选课</th><th class="col-phase-action">开始/结束登分</th></tr></thead>
             <tbody>
               ${semesters.map((term) => `
                 <tr>
@@ -614,31 +656,100 @@ function renderSemesterAdmin() {
                   <td>${text(dateRange(term.startDate, term.endDate))}</td>
                   <td>${creditNumber(term.maxCredit)} 学分</td>
                   <td>${badge(term.status)}</td>
-                  <td>${bool(term.isCurrent) ? '是' : '否'}</td>
+                  <td>
+                    <button class="btn btn-sm" data-action="open-edit-semester-modal" data-id="${term.id}">编辑</button>
+                  </td>
+                  <td>${semesterSelectionAction(term)}</td>
+                  <td>${semesterGradingAction(term)}</td>
                 </tr>
               `).join('')}
             </tbody>
           </table>
         </div>
       </section>
-      <section class="grid-2">
-        <div class="panel">
-          <div class="panel-header"><div><h2>新建学期</h2><p>保存学期基础信息；是否为当前学期会按系统日期自动计算。</p></div></div>
+    </div>
+  `;
+}
+
+function semesterSelectionAction(term) {
+  const selectionOpen = bool(term.selectionOpen);
+  const gradingOpen = bool(term.gradingOpen);
+  const archived = term.status === 'archived';
+  if (selectionOpen) {
+    return `<button class="btn btn-sm btn-danger" data-action="semester-selection-stop" data-id="${term.id}">结束选课</button>`;
+  }
+  const disabled = gradingOpen || archived;
+  const title = gradingOpen ? '该学期正在登分' : archived ? '已归档学期不能开始选课' : '';
+  return `<button class="btn btn-sm btn-primary" data-action="semester-selection-start" data-id="${term.id}" ${disabled ? `disabled title="${title}"` : ''}>开始选课</button>`;
+}
+
+function semesterGradingAction(term) {
+  const selectionOpen = bool(term.selectionOpen);
+  const gradingOpen = bool(term.gradingOpen);
+  const notStarted = term.status === 'not_started';
+  if (gradingOpen) {
+    return `<button class="btn btn-sm btn-danger" data-action="semester-grading-stop" data-id="${term.id}">结束登分</button>`;
+  }
+  const disabled = selectionOpen || notStarted;
+  const title = selectionOpen ? '该学期正在选课' : notStarted ? '未开始学期不能开始登分' : '';
+  return `<button class="btn btn-sm btn-primary" data-action="semester-grading-start" data-id="${term.id}" ${disabled ? `disabled title="${title}"` : ''}>开始登分</button>`;
+}
+
+function renderCreateSemesterModal() {
+  return `
+    <div class="modal-backdrop">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>新建学期</h2>
+          <button class="btn btn-ghost" data-action="close-modal">&times;</button>
+        </div>
+        <div class="modal-body">
           <form class="form-grid" data-form="create-semester">
             ${semesterFields({}, false)}
-            <div class="form-actions"><button class="btn btn-primary" type="submit">新建学期</button></div>
+            <div class="form-actions">
+              <button class="btn" type="button" data-action="close-modal">取消</button>
+              <button class="btn btn-primary" type="submit">新建学期</button>
+            </div>
           </form>
         </div>
-        <div class="panel">
-          <div class="panel-header"><div><h2>编辑当前学期</h2><p>修改学期名称、日期范围和最大学分。</p></div></div>
-          ${current ? `
-            <form class="form-grid" data-form="update-semester" data-semester-id="${current.id}">
-              ${semesterFields(current, false)}
-              <div class="form-actions"><button class="btn btn-primary" type="submit">保存学期</button></div>
-            </form>
-          ` : empty('暂无当前学期')}
+      </div>
+    </div>
+  `;
+}
+
+function renderEditSemesterModal(semesterId) {
+  const catalog = state.adminCatalog || {};
+  const current = (catalog.semesters || []).find((term) => String(term.id) === String(semesterId)) || catalog.currentSemester;
+  if (!current) {
+    return `
+      <div class="modal-backdrop">
+        <div class="modal">
+          <div class="modal-header">
+            <h2>编辑学期</h2>
+            <button class="btn btn-ghost" data-action="close-modal">&times;</button>
+          </div>
+          <div class="modal-body">${empty('暂无当前学期')}</div>
         </div>
-      </section>
+      </div>
+    `;
+  }
+  return `
+    <div class="modal-backdrop">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>编辑学期</h2>
+          <button class="btn btn-ghost" data-action="close-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <form class="form-grid" data-form="update-semester" data-semester-id="${current.id}">
+            ${semesterFields(current, false)}
+            <div class="form-actions">
+              <button class="btn" type="button" data-action="close-modal">取消</button>
+              <button class="btn btn-primary" type="submit">保存学期</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -705,9 +816,64 @@ function userStatusAction(type, row) {
   return `<button class="btn btn-primary" data-action="${type}-enable" data-id="${id}">启用</button>`;
 }
 
+function ensureAdminSemesterSelection(key) {
+  const semesters = state.adminCatalog?.semesters || [];
+  if (!semesters.length) {
+    state.selected[key] = null;
+    return '';
+  }
+  const currentValue = state.selected[key];
+  const exists = semesters.some((semester) => String(semester.id) === String(currentValue));
+  if (!exists) {
+    const currentSemester = state.adminCatalog?.currentSemester;
+    state.selected[key] = currentSemester?.id || semesters[0].id;
+  }
+  return String(state.selected[key] || '');
+}
+
+function selectedAdminSemester(key) {
+  const selectedId = ensureAdminSemesterSelection(key);
+  return (state.adminCatalog?.semesters || []).find((semester) => String(semester.id) === selectedId);
+}
+
+function semesterSelectOptions(selectedId) {
+  const semesters = state.adminCatalog?.semesters || [];
+  return semesters.map((semester) => (
+    `<option value="${text(semester.id)}" ${String(semester.id) === String(selectedId) ? 'selected' : ''}>${text(semester.name)}</option>`
+  )).join('');
+}
+
+function ensureCatalogSemesterSelection(key) {
+  const semesters = state.catalog?.semesters || [];
+  if (!semesters.length) {
+    state.selected[key] = null;
+    return '';
+  }
+  const currentValue = state.selected[key];
+  const exists = semesters.some((semester) => String(semester.id) === String(currentValue));
+  if (!exists) {
+    const currentSemester = state.catalog?.currentSemester;
+    state.selected[key] = currentSemester?.id || semesters[0].id;
+  }
+  return String(state.selected[key] || '');
+}
+
+function selectedCatalogSemester(key) {
+  const selectedId = ensureCatalogSemesterSelection(key);
+  return (state.catalog?.semesters || []).find((semester) => String(semester.id) === selectedId);
+}
+
+function catalogSemesterSelectOptions(selectedId) {
+  const semesters = state.catalog?.semesters || [];
+  return semesters.map((semester) => (
+    `<option value="${text(semester.id)}" ${String(semester.id) === String(selectedId) ? 'selected' : ''}>${text(semester.name)}</option>`
+  )).join('');
+}
+
 function renderCourseManage() {
-  const catalog = state.adminCatalog || {};
   const offerings = state.routeData.offerings || [];
+  const selectedSemester = selectedAdminSemester('offeringSemesterId');
+  const selectedSemesterId = selectedSemester?.id || '';
   const totalPages = Math.max(1, Math.ceil(offerings.length / state.offeringPageSize));
   if (state.offeringPage > totalPages) state.offeringPage = totalPages;
   const start = (state.offeringPage - 1) * state.offeringPageSize;
@@ -715,10 +881,18 @@ function renderCourseManage() {
   return `
     <section class="panel">
       <div class="panel-header">
-        <div><h2>课程班管理</h2><p>只维护当前学期课程班；弃用课程不会出现在新增课程班的课程选项中。</p></div>
+        <div>
+          <div class="panel-title-row">
+            <h2>课程班管理</h2>
+            <select class="semester-select" data-action="offering-semester-select" ${selectedSemesterId ? '' : 'disabled'}>
+              ${semesterSelectOptions(selectedSemesterId)}
+            </select>
+          </div>
+          <p>按所选学期维护课程班；添加课程班也会写入该学期。</p>
+        </div>
         <div class="panel-actions" style="gap:8px">
           <form data-form="offering-search" style="display:flex;gap:8px"><input name="keyword" value="${text(state.filters.offeringKeyword)}" placeholder="课程/教师/教室"><button class="btn">查询</button></form>
-          <button class="btn btn-primary" data-action="open-offering-modal">添加课程班</button>
+          <button class="btn btn-primary" data-action="open-offering-modal" ${selectedSemesterId ? '' : 'disabled'}>添加课程班</button>
         </div>
       </div>
       ${offeringTable(pageItems, true)}
@@ -790,7 +964,7 @@ function renderCourseModal() {
 
 function renderOfferingModal() {
   const catalog = state.adminCatalog || {};
-  const currentSemester = catalog.currentSemester;
+  const selectedSemester = selectedAdminSemester('offeringSemesterId');
   const availableCourses = (catalog.courses || []).filter((course) => course.status !== 'disabled');
   return `
     <div class="modal-backdrop">
@@ -802,13 +976,13 @@ function renderOfferingModal() {
         <div class="modal-body">
           <form class="form-grid" data-form="create-offering-modal">
             <label class="field"><span>课程</span><select name="courseId" required>${options(availableCourses, 'id', (item) => `${item.code} ${item.name}`)}</select></label>
-            <input type="hidden" name="semesterId" value="${text(currentSemester?.id || '')}">
-            <label class="field"><span>学期</span><input value="${text(currentSemester?.name || '暂无可用学期')}" disabled></label>
+            <input type="hidden" name="semesterId" value="${text(selectedSemester?.id || '')}">
+            <label class="field"><span>学期</span><input value="${text(selectedSemester?.name || '暂无可用学期')}" disabled></label>
             <label class="field"><span>教师</span><select name="teacherId" required>${options(catalog.teachers, 'id', (item) => `${item.teacherNo} ${item.name}`)}</select></label>
             ${offeringTimesEditor()}
             <label class="field"><span>容量</span><input name="capacity" type="number" min="1" required></label>
             <label class="field"><span>期末占比(%)</span><input name="examRatio" type="number" min="0" max="100" step="1" placeholder="60"></label>
-            <div class="form-actions"><button class="btn btn-primary" type="submit" ${currentSemester && availableCourses.length ? '' : 'disabled'}>添加课程班</button></div>
+            <div class="form-actions"><button class="btn btn-primary" type="submit" ${selectedSemester && availableCourses.length ? '' : 'disabled'}>添加课程班</button></div>
           </form>
         </div>
       </div>
@@ -821,7 +995,6 @@ function renderEditOfferingModal(offeringId) {
   const offerings = state.routeData.offerings || [];
   const offering = offerings.find((o) => String(o.id) === String(offeringId));
   if (!offering) return '';
-  const currentSemester = catalog.currentSemester;
   const examPct = offering.examRatio != null ? Math.round(Number(offering.examRatio) * 100) : '';
   const minCapacity = Math.max(1, Number(offering.selectedCount || 0));
   return `
@@ -835,9 +1008,9 @@ function renderEditOfferingModal(offeringId) {
           <form class="form-grid" data-form="edit-offering-modal" data-offering-id="${offeringId}">
             <input type="hidden" name="courseId" value="${text(offering.courseId)}">
             <input type="hidden" name="semesterId" value="${text(offering.semesterId)}">
-            <input type="hidden" name="status" value="selecting">
+            <input type="hidden" name="status" value="${text(offering.status || 'selecting')}">
             <label class="field"><span>课程</span><input value="${text(offering.courseCode)} ${text(offering.courseName)}" disabled></label>
-            <label class="field"><span>学期</span><input value="${text(currentSemester?.name || '')}" disabled></label>
+            <label class="field"><span>学期</span><input value="${text(offering.semesterName || '')}" disabled></label>
             <label class="field"><span>教师</span><select name="teacherId" required>${options(catalog.teachers, 'id', (item) => `${item.teacherNo} ${item.name}`, offering.teacherId)}</select></label>
             ${offeringTimesEditor(offeringTimes(offering))}
             <label class="field"><span>容量</span><input name="capacity" type="number" min="${minCapacity}" value="${text(offering.capacity)}" required></label>
@@ -983,11 +1156,18 @@ function renderCourseRosterModal(offeringId) {
 
 function renderTeacherOfferingsModal(teacherId) {
   const data = state.routeData.teacherCourseData || [];
+  const selectedSemester = selectedAdminSemester('teacherOfferingSemesterId');
+  const selectedSemesterId = selectedSemester?.id || '';
   return `
     <div class="modal-backdrop">
       <div class="modal">
         <div class="modal-header">
-          <h2>授课详情</h2>
+          <div class="modal-title-row">
+            <h2>授课详情</h2>
+            <select class="semester-select" data-action="teacher-offering-semester-select" data-teacher-id="${teacherId}" ${selectedSemesterId ? '' : 'disabled'}>
+              ${semesterSelectOptions(selectedSemesterId)}
+            </select>
+          </div>
           <button class="btn btn-ghost" data-action="close-modal">&times;</button>
         </div>
         <div class="modal-body">
@@ -1003,7 +1183,7 @@ function renderTeacherOfferingsModal(teacherId) {
                 </tr>
               `).join('')}</tbody>
             </table></div>
-          ` : empty('该教师本学期暂无授课')}
+          ` : empty('该教师该学期暂无授课')}
         </div>
       </div>
     </div>
@@ -1012,11 +1192,18 @@ function renderTeacherOfferingsModal(teacherId) {
 
 function renderStudentEnrollmentsModal(studentId) {
   const data = state.routeData.studentCourseData || [];
+  const selectedSemester = selectedAdminSemester('studentEnrollmentSemesterId');
+  const selectedSemesterId = selectedSemester?.id || '';
   return `
     <div class="modal-backdrop">
       <div class="modal">
         <div class="modal-header">
-          <h2>选课详情</h2>
+          <div class="modal-title-row">
+            <h2>选课详情</h2>
+            <select class="semester-select" data-action="student-enrollment-semester-select" data-student-id="${studentId}" ${selectedSemesterId ? '' : 'disabled'}>
+              ${semesterSelectOptions(selectedSemesterId)}
+            </select>
+          </div>
           <button class="btn btn-ghost" data-action="close-modal">&times;</button>
         </div>
         <div class="modal-body">
@@ -1033,7 +1220,7 @@ function renderStudentEnrollmentsModal(studentId) {
                 </tr>
               `).join('')}</tbody>
             </table></div>
-          ` : empty('该学生本学期暂无选课')}
+          ` : empty('该学生该学期暂无选课')}
         </div>
       </div>
     </div>
@@ -1179,6 +1366,19 @@ function renderTeacherCourses() {
   `;
 }
 
+function renderTeacherSchedule() {
+  const rows = state.routeData.teacherSchedule || [];
+  const term = state.catalog?.currentSemester || {};
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div><h2>排课安排</h2><p>${term.name ? `显示 ${text(term.name)} 的排课表。` : '显示当前学期排课表。'}</p></div>
+      </div>
+      ${scheduleGrid(rows, { showTeacher: false })}
+    </section>
+  `;
+}
+
 function renderTeacherRosterModal(offeringId) {
   const courses = state.routeData.teacherCourses || [];
   const course = courses.find((c) => String(c.id) === String(offeringId));
@@ -1222,16 +1422,16 @@ function renderCourseSelect() {
     <div class="course-select-layout">
       <section class="panel">
         <div class="panel-header">
-          <div><h2>在线选课</h2><p>学期持续期间均可选课，当前日期在学期范围内即可选课。</p></div>
+          <div><h2>在线选课</h2><p>管理员开放选课后才可选课；关闭后不能继续选课或退课。</p></div>
           <form class="panel-actions" data-form="course-search"><input name="keyword" value="${text(state.filters.courseKeyword)}" placeholder="课程/教师/教室"><button class="btn">查询</button></form>
         </div>
-        ${rows.length ? `<div class="course-grid">${rows.map(courseCard).join('')}</div>` : empty('暂无可显示课程')}
+        ${rows.length ? `<div class="course-grid">${rows.map(courseCard).join('')}</div>` : empty(data.selectionOpen ? '暂无可显示课程' : '未开放选课')}
       </section>
       <aside class="panel preview-card">
         <div class="panel-header"><div><h2>选课窗口</h2></div></div>
         <div class="list-stack">
           <div class="list-item"><div><strong>${text(semester.name)}</strong><p>${text(dateRange(semester.startDate, semester.endDate))}</p></div>${badge(semester.status)}</div>
-          <div class="list-item"><div><strong>当前是否可选</strong><p>${data.selectionOpen ? '在学期日期内，可以选课' : '不在学期日期内，不可选课'}</p></div></div>
+          <div class="list-item"><div><strong>当前是否可选</strong><p>${data.selectionOpen ? `${text(semester.name)}选课中，可以选课` : '未开放选课，不可选课'}</p></div></div>
           <div class="list-item"><div><strong>重修规则</strong><p>历史已通过课程不可重复选择，挂科课程可重新选择。</p></div></div>
           <div class="list-item"><div><strong>退课限制</strong><p>已被教师登分的课程不能退课。</p></div></div>
         </div>
@@ -1246,7 +1446,7 @@ function courseCard(row) {
   const full = Number(row.selectedCount || 0) >= Number(row.capacity || 0);
   const selectionOpen = Boolean(state.routeData.studentOfferings?.selectionOpen);
   const disabled = !selectionOpen || row.status !== 'selecting' || passedBefore || full;
-  const reason = selected ? '已选' : passedBefore ? '已通过' : full ? '已满' : !selectionOpen ? '非选课期' : row.status !== 'selecting' ? '已结课' : '可选';
+  const reason = selected ? '已选' : passedBefore ? '已通过' : full ? '已满' : !selectionOpen ? '未开放选课' : row.status !== 'selecting' ? '已结课' : '可选';
   return `
     <article class="course-card">
       <div>
@@ -1270,15 +1470,27 @@ function courseCard(row) {
 
 function renderSchedule() {
   const rows = state.routeData.schedule || [];
+  const selectedSemester = selectedCatalogSemester('scheduleSemesterId');
+  const selectedSemesterId = selectedSemester?.id || '';
   return `
     <section class="panel">
-      <div class="panel-header"><div><h2>我的课表</h2><p>只显示当前学期已选课程。</p></div></div>
+      <div class="panel-header">
+        <div>
+          <div class="panel-title-row">
+            <h2>我的课表</h2>
+            <select class="semester-select" data-action="schedule-semester-select" ${selectedSemesterId ? '' : 'disabled'}>
+              ${catalogSemesterSelectOptions(selectedSemesterId)}
+            </select>
+          </div>
+          <p>按所选学期查看已选课程课表。</p>
+        </div>
+      </div>
       ${scheduleGrid(rows)}
     </section>
   `;
 }
 
-function scheduleGrid(rows) {
+function scheduleGrid(rows, options = {}) {
   const slots = [[1,2], [3,4], [5,6], [7,8], [9,10], [11,12]];
   const entries = rows.flatMap((row) => offeringTimes(row).map((time) => ({ ...row, ...time })));
   const cells = ['<div class="schedule-head">节次</div>', ...dayNames.slice(1).map((day) => `<div class="schedule-head">${day}</div>`)];
@@ -1286,7 +1498,10 @@ function scheduleGrid(rows) {
     cells.push(`<div class="schedule-slot">${start}-${end}节</div>`);
     for (let day = 1; day <= 7; day += 1) {
       const courses = entries.filter((row) => Number(row.dayOfWeek) === day && Number(row.startSection) <= start && Number(row.endSection) >= end);
-      cells.push(courses.length ? `<div class="schedule-course">${courses.map((course) => `<strong>${text(course.courseName)}</strong>${text(course.startWeek || 1)}-${text(course.endWeek || 16)}周 · ${text(weekTypeText[course.weekType] || '全部')} · ${text(course.teacherName)}<br>${text(course.classroom)}`).join('<hr>')}</div>` : '<div></div>');
+      cells.push(courses.length ? `<div class="schedule-course">${courses.map((course) => {
+        const teacher = options.showTeacher === false ? '' : ` · ${text(course.teacherName)}`;
+        return `<strong>${text(course.courseName)}</strong>${text(course.startWeek || 1)}-${text(course.endWeek || 16)}周 · ${text(weekTypeText[course.weekType] || '全部')}${teacher}<br>${text(course.classroom)}`;
+      }).join('<hr>')}</div>` : '<div></div>');
     }
   });
   return `<div class="schedule"><div class="schedule-grid">${cells.join('')}</div></div>`;
@@ -1497,13 +1712,37 @@ document.addEventListener('click', async (event) => {
       renderShell();
       toast('学生已退课');
     } else if (action === 'teacher-offerings') {
-      state.routeData.teacherCourseData = await api(`/api/admin/teachers/${target.dataset.id}/offerings`);
+      const semesterId = ensureAdminSemesterSelection('teacherOfferingSemesterId');
+      const query = semesterId ? `?semesterId=${encodeURIComponent(semesterId)}` : '';
+      state.routeData.teacherCourseData = await api(`/api/admin/teachers/${target.dataset.id}/offerings${query}`);
       state.modal = renderTeacherOfferingsModal(target.dataset.id);
       renderShell();
     } else if (action === 'student-enrollments') {
-      state.routeData.studentCourseData = await api(`/api/admin/students/${target.dataset.id}/enrollments`);
+      const semesterId = ensureAdminSemesterSelection('studentEnrollmentSemesterId');
+      const query = semesterId ? `?semesterId=${encodeURIComponent(semesterId)}` : '';
+      state.routeData.studentCourseData = await api(`/api/admin/students/${target.dataset.id}/enrollments${query}`);
       state.modal = renderStudentEnrollmentsModal(target.dataset.id);
       renderShell();
+    } else if (action === 'open-create-semester-modal') {
+      state.modal = renderCreateSemesterModal();
+      renderShell();
+    } else if (action === 'open-edit-semester-modal') {
+      state.modal = renderEditSemesterModal(target.dataset.id);
+      renderShell();
+    } else if (action === 'semester-selection-start') {
+      await api(`/api/admin/semesters/${target.dataset.id}/selection/start`, { method: 'POST' });
+      await refresh('选课已开放');
+    } else if (action === 'semester-selection-stop') {
+      if (!confirm('确定要结束该学期选课吗？关闭后学生不能继续选课或退课。')) return;
+      await api(`/api/admin/semesters/${target.dataset.id}/selection/stop`, { method: 'POST' });
+      await refresh('选课已关闭');
+    } else if (action === 'semester-grading-start') {
+      await api(`/api/admin/semesters/${target.dataset.id}/grading/start`, { method: 'POST' });
+      await refresh('登分已开放');
+    } else if (action === 'semester-grading-stop') {
+      if (!confirm('确定要结束该学期登分吗？关闭后教师不能继续保存成绩。')) return;
+      await api(`/api/admin/semesters/${target.dataset.id}/grading/stop`, { method: 'POST' });
+      await refresh('登分已关闭');
     } else if (action === 'open-course-modal') {
       state.modal = renderCourseModal();
       renderShell();
@@ -1615,12 +1854,36 @@ document.addEventListener('click', async (event) => {
 });
 
 document.addEventListener('change', async (event) => {
-  const target = event.target.closest('[data-action="grade-course-select"]');
+  const target = event.target.closest('[data-action]');
   if (!target) return;
+  const action = target.dataset.action;
   try {
-    state.selected.gradeOfferingId = target.value;
-    state.routeData.gradeRoster = await api(`/api/teacher/grade-roster?offeringId=${encodeURIComponent(state.selected.gradeOfferingId)}`);
-    renderShell();
+    if (action === 'grade-course-select') {
+      state.selected.gradeOfferingId = target.value;
+      state.routeData.gradeRoster = await api(`/api/teacher/grade-roster?offeringId=${encodeURIComponent(state.selected.gradeOfferingId)}`);
+      renderShell();
+    } else if (action === 'offering-semester-select') {
+      state.selected.offeringSemesterId = target.value;
+      state.offeringPage = 1;
+      await refresh();
+    } else if (action === 'teacher-offering-semester-select') {
+      state.selected.teacherOfferingSemesterId = target.value;
+      const query = target.value ? `?semesterId=${encodeURIComponent(target.value)}` : '';
+      state.routeData.teacherCourseData = await api(`/api/admin/teachers/${target.dataset.teacherId}/offerings${query}`);
+      state.modal = renderTeacherOfferingsModal(target.dataset.teacherId);
+      renderShell();
+    } else if (action === 'student-enrollment-semester-select') {
+      state.selected.studentEnrollmentSemesterId = target.value;
+      const query = target.value ? `?semesterId=${encodeURIComponent(target.value)}` : '';
+      state.routeData.studentCourseData = await api(`/api/admin/students/${target.dataset.studentId}/enrollments${query}`);
+      state.modal = renderStudentEnrollmentsModal(target.dataset.studentId);
+      renderShell();
+    } else if (action === 'schedule-semester-select') {
+      state.selected.scheduleSemesterId = target.value;
+      const query = target.value ? `?semesterId=${encodeURIComponent(target.value)}` : '';
+      state.routeData.schedule = await api(`/api/student/schedule${query}`);
+      renderShell();
+    }
   } catch (error) {
     toast(error.message, 'error');
   }
@@ -1658,11 +1921,13 @@ document.addEventListener('submit', async (event) => {
       const data = asNumberFields(formObject(form), ['maxCredit']);
       if (!validateSemesterPayload(data)) return;
       await api('/api/admin/semesters', { method: 'POST', body: JSON.stringify(data) });
+      state.modal = '';
       await refresh('学期已新建');
     } else if (name === 'update-semester') {
       const data = asNumberFields(formObject(form), ['maxCredit']);
       if (!validateSemesterPayload(data, form.dataset.semesterId)) return;
       await api(`/api/admin/semesters/${form.dataset.semesterId}`, { method: 'PUT', body: JSON.stringify(data) });
+      state.modal = '';
       await refresh('学期信息已保存');
     } else if (name === 'create-course-modal') {
       await api('/api/admin/courses', { method: 'POST', body: JSON.stringify(asNumberFields(formObject(form), ['departmentId', 'credit'])) });
@@ -2067,40 +2332,52 @@ function renderAdminDashboard() {
   `;
 }
 
+function currentTeacherCourses(courses) {
+  const currentSemesterId = state.catalog?.currentSemester?.id;
+  if (currentSemesterId) {
+    return courses.filter((course) => String(course.semesterId) === String(currentSemesterId));
+  }
+  return courses.filter((course) => course.semesterStatus === 'active');
+}
+
+function completedGradeCourseCount(courses) {
+  return courses.filter((course) => Number(course.gradedCount || 0) >= Number(course.studentCount || 0)).length;
+}
+
 function renderTeacherDashboard() {
   const data = state.routeData.dashboard || {};
   const courses = state.routeData.teacherCourses || [];
   const gradeCourses = state.routeData.teacherGradeCourses || [];
-  const currentCourses = courses.filter((item) => item.semesterStatus !== 'archived');
-  const gradable = gradeCourses;
+  const currentCourses = currentTeacherCourses(courses);
+  const completedGradable = completedGradeCourseCount(gradeCourses);
   return `
     <div class="page-grid role-home teacher-home">
       <section class="role-hero teacher-hero">
         <div>
           <span class="eyebrow">教师首页</span>
           <h2>${display(state.user?.displayName || state.user?.username)}，查看授课与登分任务</h2>
-          <p>聚焦本学期授课安排和历史学期成绩登记。</p>
+          <p>聚焦本学期授课安排和已开放学期成绩登记。</p>
           <div class="hero-actions">
             <button class="btn btn-primary" data-action="dashboard-go" data-route="gradeEntry">登记成绩</button>
             <button class="btn" data-action="dashboard-go" data-route="courses">我的课程</button>
+            <button class="btn" data-action="dashboard-go" data-route="teachingSchedule">排课安排</button>
           </div>
         </div>
         <div class="teacher-counts">
           <div><span>本学期课程</span><strong>${number(currentCourses.length)}</strong></div>
-          <div><span>可登分课程</span><strong>${number(gradable.length)}</strong></div>
+          <div><span>可登分课程</span><strong>${number(completedGradable)}/${number(gradeCourses.length)}</strong></div>
         </div>
       </section>
-      ${metrics(data.summary || [])}
       <div class="grid-2">
         <section class="panel">
-          <div class="panel-header"><div><h2>待关注课程</h2><p>历史学期课程可进入成绩登记。</p></div></div>
+          <div class="panel-header"><div><h2>本学期授课</h2><p>显示当前学期的授课课程班。</p></div><button class="btn" data-action="dashboard-go" data-route="teachingSchedule">课表</button></div>
           <div class="list-stack">
-            ${gradable.slice(0, 5).map((course) => `
+            ${currentCourses.map((course) => `
               <div class="list-item">
-                <div><strong>${text(course.courseCode)} ${text(course.courseName)}</strong><p>${text(course.semesterName)} · ${number(course.selectedCount)} 人</p></div>
-                <button class="btn" data-action="dashboard-go" data-route="gradeEntry">登分</button>
+                <div><strong>${text(course.courseCode)} ${text(course.courseName)}</strong><p>${courseTime(course)} · ${number(course.selectedCount)}/${number(course.capacity)} 人</p></div>
+                <button class="btn" data-action="teacher-roster" data-id="${course.id}">名单</button>
               </div>
-            `).join('') || empty('暂无需要登记的历史课程')}
+            `).join('') || empty('暂无本学期授课课程')}
           </div>
         </section>
         <section class="panel">
@@ -2131,9 +2408,8 @@ function renderStudentDashboard() {
           </div>
         </div>
         <div class="hero-term">
-          <span>选课时间</span>
-          <strong>${text(dateRange(term.startDate, term.endDate) || '暂无')}</strong>
-          <b>${text(friendlyStatus(term.status))}</b>
+          <span>当前学期</span>
+          <strong>${display(term.name, '暂无当前学期')}</strong>
         </div>
       </section>
       ${metrics(data.summary || [])}
@@ -2267,6 +2543,7 @@ function renderNoticeManage() {
 
 function renderTeacherRoute() {
   if (state.route === 'courses') return renderTeacherCourses();
+  if (state.route === 'teachingSchedule') return renderTeacherSchedule();
   if (state.route === 'gradeEntry') return renderGradeEntry();
   if (state.route === 'noticeManage') return renderNoticeManage();
   return empty('页面不存在');
@@ -2279,15 +2556,15 @@ function renderGradeEntry() {
   return `
     <div class="page-grid">
       <section class="panel">
-        <div class="panel-header"><div><h2>成绩登记</h2><p>请选择上一学期课程，完成学生成绩录入。</p></div></div>
+        <div class="panel-header"><div><h2>成绩登记</h2><p>管理员开放登分后，教师才能录入对应学期课程成绩。</p></div></div>
         ${courses.length ? `
           <label class="field">
-            <span>上一学期课程</span>
+            <span>登分中学期课程</span>
             <select data-action="grade-course-select">
               ${courses.map((course) => `<option value="${course.id}" ${String(course.id) === String(state.selected.gradeOfferingId) ? 'selected' : ''}>${text(course.semesterName)} · ${text(course.courseCode)} ${text(course.courseName)} · 已登记 ${number(course.gradedCount)}/${number(course.studentCount)}</option>`).join('')}
             </select>
           </label>
-        ` : empty('暂无上一学期课程')}
+        ` : empty('当前未开放登分')}
       </section>
       <section class="panel">
         <div class="panel-header"><div><h2>学生成绩</h2><p>${selectedCourse ? `${text(selectedCourse.courseCode)} ${text(selectedCourse.courseName)}，共 ${number(selectedCourse.studentCount)} 名学生。` : '请选择课程后录入成绩。'}</p></div></div>

@@ -14,6 +14,7 @@ DROP TABLE IF EXISTS course_offering_times;
 DROP TABLE IF EXISTS course_offerings;
 DROP TABLE IF EXISTS classrooms;
 DROP TABLE IF EXISTS courses;
+DROP TABLE IF EXISTS semester_active_phases;
 DROP TABLE IF EXISTS semesters;
 DROP TABLE IF EXISTS teachers;
 DROP TABLE IF EXISTS students;
@@ -84,6 +85,14 @@ CREATE TABLE semesters (
   max_credit DECIMAL(5,1) NOT NULL DEFAULT 30.0,
   CONSTRAINT chk_semesters_date_range CHECK (start_date <= end_date),
   CHECK (max_credit > 0)
+) ENGINE=InnoDB;
+
+CREATE TABLE semester_active_phases (
+  phase ENUM('selection', 'grading') PRIMARY KEY,
+  semester_id BIGINT NOT NULL UNIQUE,
+  CONSTRAINT fk_semester_active_phases_semester
+    FOREIGN KEY (semester_id) REFERENCES semesters(id)
+    ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE courses (
@@ -414,28 +423,18 @@ BEGIN
   DECLARE v_duplicate INT DEFAULT 0;
   DECLARE v_passed_before INT DEFAULT 0;
   DECLARE v_conflict INT DEFAULT 0;
-  DECLARE v_sem_start DATE;
-  DECLARE v_sem_end DATE;
 
-  SELECT id
+  SELECT s.id
     INTO v_current_semester
-    FROM semesters
-   ORDER BY
-         CASE
-           WHEN CURDATE() BETWEEN start_date AND end_date THEN 0
-           WHEN start_date > CURDATE() THEN 1
-           ELSE 2
-         END,
-         CASE WHEN start_date > CURDATE() THEN start_date END ASC,
-         CASE WHEN CURDATE() BETWEEN start_date AND end_date THEN start_date END DESC,
-         CASE WHEN CURDATE() > end_date THEN end_date END DESC,
-         id DESC
+    FROM semesters s
+    JOIN semester_active_phases sap ON sap.semester_id = s.id
+   WHERE sap.phase = 'selection'
    LIMIT 1;
 
   SELECT co.capacity, co.selected_count, co.status, co.semester_id, co.course_id,
-         c.credit, s.start_date, s.end_date, s.max_credit
+         c.credit, s.max_credit
     INTO v_capacity, v_selected, v_status, v_semester, v_course,
-         v_credit, v_sem_start, v_sem_end, v_max_credit
+         v_credit, v_max_credit
     FROM course_offering_stats co
     JOIN courses c ON c.id = co.course_id
     JOIN semesters s ON s.id = co.semester_id
@@ -488,10 +487,10 @@ BEGIN
           OR selected_time.week_type = 'all'
           OR existing_time.week_type = selected_time.week_type);
 
-  IF v_semester <> v_current_semester THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '只能选择当前学期课程';
-  ELSEIF CURDATE() < v_sem_start OR CURDATE() > v_sem_end THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '当前日期不在学期起止日期内，不能选课';
+  IF v_current_semester IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '当前未开放选课';
+  ELSEIF v_semester <> v_current_semester THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '只能选择正在开放选课的学期课程';
   ELSEIF v_status <> 'selecting' THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '当前课程未开放选课';
   ELSEIF v_selected >= v_capacity THEN

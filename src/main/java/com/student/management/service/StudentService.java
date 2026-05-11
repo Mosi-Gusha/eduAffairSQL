@@ -48,15 +48,19 @@ public class StudentService {
     public Map<String, Object> offerings(SessionUser user, String keyword) {
         Long studentId = studentId(user);
         return cache.get("student:" + studentId + ":offerings:" + cache.keyPart(keyword), MAP_TYPE, () -> {
-            Map<String, Object> semester = commonMapper.currentSemester();
+            Map<String, Object> selectionSemester = commonMapper.selectionSemester();
+            Map<String, Object> semester = selectionSemester == null ? commonMapper.currentSemester() : selectionSemester;
             if (semester == null) {
                 throw new ApiException(500, "暂无可用学期");
             }
             Long semesterId = MapUtil.longValue(semester, "id");
             return AdminService.mapOf(
                     "semester", semester,
-                    "selectionOpen", selectionOpen(),
-                    "rows", withOfferingTimes(studentMapper.listCurrentOfferings(studentId, semesterId, keyword), "id")
+                    "selectionSemester", selectionSemester,
+                    "selectionOpen", selectionSemester != null,
+                    "rows", selectionSemester == null
+                            ? List.of()
+                            : withOfferingTimes(studentMapper.listCurrentOfferings(studentId, semesterId, keyword), "id")
             );
         });
     }
@@ -64,7 +68,7 @@ public class StudentService {
     @Transactional
     public Map<String, Object> selectCourse(SessionUser user, Long offeringId) {
         if (!selectionOpen()) {
-            throw new ApiException(400, "当前不在选课时间内，学生不能选课");
+            throw new ApiException(400, "当前未开放选课，学生不能选课");
         }
         studentMapper.callSelectCourse(studentId(user), offeringId);
         clearTeachingCaches();
@@ -74,7 +78,7 @@ public class StudentService {
     @Transactional
     public Map<String, Object> dropCourse(SessionUser user, Long enrollmentId) {
         if (!selectionOpen()) {
-            throw new ApiException(400, "当前不在选课时间内，学生不能退课");
+            throw new ApiException(400, "当前未开放选课，学生不能退课");
         }
         // Check if this course has already been graded
         if (studentMapper.isEnrollmentGraded(enrollmentId)) {
@@ -88,10 +92,10 @@ public class StudentService {
         return AdminService.message("退课成功");
     }
 
-    public List<Map<String, Object>> schedule(SessionUser user) {
+    public List<Map<String, Object>> schedule(SessionUser user, Long semesterId) {
         Long studentId = studentId(user);
-        return cache.get("student:" + studentId + ":schedule", LIST_TYPE,
-                () -> withOfferingTimes(studentMapper.schedule(studentId), "offeringId"));
+        return cache.get("student:" + studentId + ":schedule:" + cache.keyPart(semesterId), LIST_TYPE,
+                () -> withOfferingTimes(studentMapper.schedule(studentId, semesterId), "offeringId"));
     }
 
     public List<Map<String, Object>> grades(SessionUser user) {
@@ -131,22 +135,6 @@ public class StudentService {
     }
 
     private boolean selectionOpen() {
-        Map<String, Object> semester = commonMapper.currentSemester();
-        if (semester == null) {
-            return false;
-        }
-        String startDate = MapUtil.stringValue(semester, "startDate");
-        String endDate = MapUtil.stringValue(semester, "endDate");
-        if (startDate == null || endDate == null) {
-            return false;
-        }
-        try {
-            java.time.LocalDate now = java.time.LocalDate.now();
-            java.time.LocalDate start = java.time.LocalDate.parse(startDate);
-            java.time.LocalDate end = java.time.LocalDate.parse(endDate);
-            return !now.isBefore(start) && !now.isAfter(end);
-        } catch (Exception e) {
-            return false;
-        }
+        return commonMapper.selectionSemester() != null;
     }
 }

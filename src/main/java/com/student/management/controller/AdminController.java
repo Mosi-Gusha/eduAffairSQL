@@ -129,8 +129,9 @@ public class AdminController {
 
     @GetMapping("/offerings")
     public ApiResponse<List<Map<String, Object>>> offerings(@RequestParam(required = false) String keyword,
-                                                            @RequestParam(defaultValue = "false") boolean currentOnly) {
-        return ApiResponse.ok(adminService.listOfferings(keyword, currentOnly));
+                                                            @RequestParam(defaultValue = "false") boolean currentOnly,
+                                                            @RequestParam(required = false) Long semesterId) {
+        return ApiResponse.ok(adminService.listOfferings(keyword, currentOnly, semesterId));
     }
 
     @PostMapping("/offerings")
@@ -160,6 +161,26 @@ public class AdminController {
         return ApiResponse.ok(adminService.updateSemester(semesterId, request));
     }
 
+    @PostMapping("/semesters/{semesterId}/selection/start")
+    public ApiResponse<Map<String, Object>> startSemesterSelection(@PathVariable Long semesterId) {
+        return ApiResponse.ok(adminService.startSemesterSelection(semesterId));
+    }
+
+    @PostMapping("/semesters/{semesterId}/selection/stop")
+    public ApiResponse<Map<String, Object>> stopSemesterSelection(@PathVariable Long semesterId) {
+        return ApiResponse.ok(adminService.stopSemesterSelection(semesterId));
+    }
+
+    @PostMapping("/semesters/{semesterId}/grading/start")
+    public ApiResponse<Map<String, Object>> startSemesterGrading(@PathVariable Long semesterId) {
+        return ApiResponse.ok(adminService.startSemesterGrading(semesterId));
+    }
+
+    @PostMapping("/semesters/{semesterId}/grading/stop")
+    public ApiResponse<Map<String, Object>> stopSemesterGrading(@PathVariable Long semesterId) {
+        return ApiResponse.ok(adminService.stopSemesterGrading(semesterId));
+    }
+
     @GetMapping("/enrollment-report")
     public ApiResponse<List<Map<String, Object>>> enrollmentReport() {
         return ApiResponse.ok(adminService.enrollmentReport());
@@ -171,13 +192,15 @@ public class AdminController {
     }
 
     @GetMapping("/teachers/{teacherId}/offerings")
-    public ApiResponse<List<Map<String, Object>>> teacherOfferings(@PathVariable Long teacherId) {
-        return ApiResponse.ok(adminService.teacherCurrentOfferings(teacherId));
+    public ApiResponse<List<Map<String, Object>>> teacherOfferings(@PathVariable Long teacherId,
+                                                                   @RequestParam(required = false) Long semesterId) {
+        return ApiResponse.ok(adminService.teacherOfferings(teacherId, semesterId));
     }
 
     @GetMapping("/students/{studentId}/enrollments")
-    public ApiResponse<List<Map<String, Object>>> studentEnrollments(@PathVariable Long studentId) {
-        return ApiResponse.ok(adminService.studentCurrentEnrollments(studentId));
+    public ApiResponse<List<Map<String, Object>>> studentEnrollments(@PathVariable Long studentId,
+                                                                    @RequestParam(required = false) Long semesterId) {
+        return ApiResponse.ok(adminService.studentEnrollments(studentId, semesterId));
     }
 
     @GetMapping("/offerings/{offeringId}/grade-stats")

@@ -31,6 +31,11 @@ public class TeacherController {
         return ApiResponse.ok(teacherService.courses(user));
     }
 
+    @GetMapping("/schedule")
+    public ApiResponse<List<Map<String, Object>>> schedule(SessionUser user) {
+        return ApiResponse.ok(teacherService.schedule(user));
+    }
+
     @GetMapping("/grade-courses")
     public ApiResponse<List<Map<String, Object>>> gradeCourses(SessionUser user) {
         return ApiResponse.ok(teacherService.gradeCourses(user));

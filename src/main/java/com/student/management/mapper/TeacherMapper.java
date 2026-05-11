@@ -15,6 +15,7 @@ public interface TeacherMapper {
                    co.status, co.exam_ratio AS examRatio,
                    c.code AS courseCode, c.name AS courseName, c.credit,
                    s.id AS semesterId, s.name AS semesterName,
+                   grading_phase.semester_id IS NOT NULL AS gradingOpen,
                    CASE
                      WHEN CURDATE() < s.start_date THEN 'not_started'
                      WHEN CURDATE() BETWEEN s.start_date AND s.end_date THEN 'active'
@@ -24,6 +25,8 @@ public interface TeacherMapper {
               FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN semesters s ON s.id = co.semester_id
+              LEFT JOIN semester_active_phases grading_phase
+                ON grading_phase.semester_id = s.id AND grading_phase.phase = 'grading'
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
              WHERE co.teacher_id = #{teacherId}
@@ -33,19 +36,49 @@ public interface TeacherMapper {
 
     @Select("""
             SELECT co.id, co.capacity, co.selected_count AS selectedCount,
+                   co.status, co.exam_ratio AS examRatio,
+                   c.code AS courseCode, c.name AS courseName, c.credit,
+                   s.id AS semesterId, s.name AS semesterName,
+                   grading_phase.semester_id IS NOT NULL AS gradingOpen,
+                   CASE
+                     WHEN CURDATE() < s.start_date THEN 'not_started'
+                     WHEN CURDATE() BETWEEN s.start_date AND s.end_date THEN 'active'
+                     ELSE 'archived'
+                   END AS semesterStatus,
+                   u.display_name AS teacherName
+              FROM course_offering_stats co
+              JOIN courses c ON c.id = co.course_id
+              JOIN semesters s ON s.id = co.semester_id
+              LEFT JOIN semester_active_phases grading_phase
+                ON grading_phase.semester_id = s.id AND grading_phase.phase = 'grading'
+              JOIN teachers t ON t.id = co.teacher_id
+              JOIN users u ON u.id = t.user_id
+             WHERE co.teacher_id = #{teacherId}
+               AND s.id = (
+            """ + CommonMapper.CURRENT_SEMESTER_ID_SQL + """
+                   )
+             ORDER BY co.id
+            """)
+    List<Map<String, Object>> schedule(@Param("teacherId") Long teacherId);
+
+    @Select("""
+            SELECT co.id, co.capacity, co.selected_count AS selectedCount,
                    co.status, c.code AS courseCode, c.name AS courseName, c.credit,
                    s.id AS semesterId, s.name AS semesterName,
+                   TRUE AS gradingOpen,
                    CASE
                      WHEN CURDATE() < s.start_date THEN 'not_started'
                      WHEN CURDATE() BETWEEN s.start_date AND s.end_date THEN 'active'
                      ELSE 'archived'
                    END AS semesterStatus,
                    COUNT(e.id) AS studentCount,
-                   COUNT(g.id) AS gradedCount,
-                   COALESCE(SUM(CASE WHEN g.final_score IS NULL THEN 1 ELSE 0 END), 0) AS missingGradeCount
+                   COUNT(g.final_score) AS gradedCount,
+                   COALESCE(SUM(CASE WHEN e.id IS NOT NULL AND g.final_score IS NULL THEN 1 ELSE 0 END), 0) AS missingGradeCount
               FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN semesters s ON s.id = co.semester_id
+              JOIN semester_active_phases grading_phase
+                ON grading_phase.semester_id = s.id AND grading_phase.phase = 'grading'
               LEFT JOIN enrollments e ON e.offering_id = co.id AND e.status = 'selected'
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE co.teacher_id = #{teacherId}
@@ -83,6 +116,9 @@ public interface TeacherMapper {
               JOIN majors m ON m.id = s.major_id
               JOIN departments d ON d.id = m.department_id
               JOIN course_offerings co ON co.id = e.offering_id
+              JOIN semesters sem ON sem.id = co.semester_id
+              JOIN semester_active_phases grading_phase
+                ON grading_phase.semester_id = sem.id AND grading_phase.phase = 'grading'
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.offering_id = #{offeringId}
                AND co.teacher_id = #{teacherId}
@@ -93,6 +129,7 @@ public interface TeacherMapper {
 
     @Select("""
             SELECT co.teacher_id AS teacherId,
+                   grading_phase.semester_id IS NOT NULL AS gradingOpen,
                    CASE
                      WHEN CURDATE() < sem.start_date THEN 'not_started'
                      WHEN CURDATE() BETWEEN sem.start_date AND sem.end_date THEN 'active'
@@ -102,6 +139,8 @@ public interface TeacherMapper {
               FROM enrollments e
               JOIN course_offerings co ON co.id = e.offering_id
               JOIN semesters sem ON sem.id = co.semester_id
+              LEFT JOIN semester_active_phases grading_phase
+                ON grading_phase.semester_id = sem.id AND grading_phase.phase = 'grading'
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.id = #{enrollmentId}
                AND e.status = 'selected'
