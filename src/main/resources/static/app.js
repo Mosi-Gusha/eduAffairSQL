@@ -15,7 +15,68 @@ const statusText = {
   selected: '已选',
   dropped: '已退',
   disabled: '弃用',
-  enabled: '启用'
+  enabled: '启用',
+  started: '已开始',
+  success: '成功',
+  failed: '失败',
+  rolled_back: '已回滚',
+  committed: '已提交',
+  deleted: '已删除'
+};
+const operationText = {
+  START: '开始',
+  INSERT: '新增',
+  UPDATE: '更新',
+  DELETE: '删除',
+  UPSERT: '写入',
+  COMMIT: '提交',
+  ROLLBACK: '回滚'
+};
+const businessTypeText = {
+  select_course: '学生选课',
+  student_drop_course: '学生退课',
+  admin_drop_course: '管理员退课',
+  admin_drop_enrollment: '管理员退课',
+  save_grade: '录入成绩',
+  create_user: '新增用户',
+  delete_user: '停用用户',
+  change_password: '修改密码',
+  create_teacher: '新增教师',
+  update_teacher: '修改教师',
+  disable_teacher: '停用教师',
+  enable_teacher: '启用教师',
+  create_student: '新增学生',
+  update_student: '修改学生',
+  disable_student: '停用学生',
+  enable_student: '启用学生',
+  create_course: '新增课程',
+  enable_course: '启用课程',
+  disable_course: '停用课程',
+  create_offering: '新增课程班',
+  update_offering: '修改课程班',
+  delete_offering: '删除课程班',
+  create_semester: '新增学期',
+  update_semester: '修改学期',
+  start_selection: '开放选课',
+  stop_selection: '关闭选课',
+  start_grading: '开放登分',
+  stop_grading: '关闭登分',
+  create_notice: '发布通知',
+  update_notice: '修改通知',
+  delete_notice: '删除通知'
+};
+const tableText = {
+  users: '用户',
+  teachers: '教师',
+  students: '学生',
+  courses: '课程',
+  course_offerings: '课程班',
+  course_offering_times: '排课时间',
+  enrollments: '选课记录',
+  grades: '成绩',
+  semesters: '学期',
+  semester_active_phases: '学期阶段',
+  notices: '通知'
 };
 const roleText = { admin: '管理员', teacher: '教师', student: '学生' };
 const audienceText = { all: '全部', teacher: '教师', student: '学生' };
@@ -29,6 +90,8 @@ const navs = {
     ['studentManage', '学生管理'],
     ['teacherManage', '教师管理'],
     ['noticeManage', '通知发布'],
+    ['auditLogs', '事务日志'],
+    ['backupManage', '逻辑备份'],
     ['profile', '个人信息']
   ],
   teacher: [
@@ -57,6 +120,8 @@ const routeTitles = {
   studentManage: '学生管理',
   teacherManage: '教师管理',
   noticeManage: '通知发布',
+  auditLogs: '事务日志',
+  backupManage: '逻辑备份',
   profile: '个人信息',
   courses: '任课课程',
   teachingSchedule: '排课安排',
@@ -103,7 +168,11 @@ const state = {
   teacherPage: 1,
   teacherPageSize: 10,
   noticePage: 1,
-  noticePageSize: 5
+  noticePageSize: 5,
+  logPage: 1,
+  logPageSize: 10,
+  backupPage: 1,
+  backupPageSize: 10
 };
 
 function readJson(key) {
@@ -277,13 +346,13 @@ function offeringTimeFields(time = {}) {
 }
 
 function badge(status) {
-  const cls = status === 'selecting' || status === 'active' || status === 'open' || status === 'enabled' || status === 'selected'
+  const cls = status === 'selecting' || status === 'active' || status === 'open' || status === 'enabled' || status === 'selected' || status === 'success' || status === 'committed'
     ? 'status-success'
-    : status === 'planning' || status === 'not_started'
+    : status === 'planning' || status === 'not_started' || status === 'started'
       ? 'status-warn'
-      : status === 'archived'
+      : status === 'archived' || status === 'deleted'
         ? 'status-muted'
-        : status === 'closed' || status === 'disabled'
+        : status === 'closed' || status === 'disabled' || status === 'failed' || status === 'rolled_back'
           ? 'status-danger'
           : '';
   return `<span class="status-tag ${cls}">${text(statusText[status] || status)}</span>`;
@@ -408,6 +477,10 @@ async function loadRoute(force = false) {
       const params = new URLSearchParams({ keyword: state.filters.offeringKeyword || '' });
       if (semesterId) params.set('semesterId', semesterId);
       state.routeData.offerings = await api(`/api/admin/offerings?${params.toString()}`);
+    } else if (route === 'auditLogs') {
+      state.routeData.auditLogs = await api(`/api/admin/logs?page=${encodeURIComponent(state.logPage)}&pageSize=${encodeURIComponent(state.logPageSize)}`);
+    } else if (route === 'backupManage') {
+      state.routeData.backups = await api(`/api/admin/backups?page=${encodeURIComponent(state.backupPage)}&pageSize=${encodeURIComponent(state.backupPageSize)}`);
     } else if (route === 'studentTeachingSearch') {
     return;
   }
@@ -631,6 +704,8 @@ function renderAdminRoute() {
   if (state.route === 'studentManage') return renderStudents();
   if (state.route === 'teacherManage') return renderTeachers();
   if (state.route === 'noticeManage') return renderNoticeManage('admin');
+  if (state.route === 'auditLogs') return renderAuditLogs();
+  if (state.route === 'backupManage') return renderBackupManage();
   return empty('页面不存在');
 }
 
@@ -935,6 +1010,116 @@ function renderPagination(totalPages, currentPage, actionName) {
         <button class="btn btn-sm ${p === currentPage ? 'btn-primary' : ''}" data-action="${actionName}" data-page="${p}">${p}</button>
       `).join('')}
       <button class="btn btn-sm" data-action="${actionName}" data-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>下一页</button>
+    </div>
+  `;
+}
+
+function pageSummary(data) {
+  return `第 ${number(data.page || 1)} / ${number(data.totalPages || 1)} 页，共 ${number(data.total || 0)} 条`;
+}
+
+function shortId(value) {
+  const raw = String(value || '');
+  if (!raw) return '-';
+  return raw.length > 12 ? `${text(raw.slice(0, 8))}...` : text(raw);
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return '-';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = bytes;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${size >= 10 || index === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[index]}`;
+}
+
+function renderAuditLogs() {
+  const data = state.routeData.auditLogs || { rows: [], page: 1, totalPages: 1, total: 0 };
+  state.logPage = Number(data.page || 1);
+  const rows = data.rows || [];
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div><h2>事务日志</h2><p>${pageSummary(data)}，每页最多 10 条。</p></div>
+        <button class="btn" data-action="reload-audit-logs">刷新</button>
+      </div>
+      ${auditLogTable(rows)}
+      ${renderPagination(Number(data.totalPages || 1), state.logPage, 'log-page')}
+    </section>
+  `;
+}
+
+function auditLogTable(rows) {
+  if (!rows.length) return empty('暂无事务日志');
+  return `
+    <div class="table-wrap">
+      <table class="audit-log-table">
+        <thead><tr><th class="col-name">操作人</th><th class="col-date">时间</th><th class="col-dept">对象</th><th class="col-course">动作</th><th class="col-status">结果</th></tr></thead>
+        <tbody>${rows.map((row) => `
+          <tr>
+            <td>${text(row.actorName || row.actorUserId || '-')}</td>
+            <td>${text(row.createdAt)}</td>
+            <td>${text(auditObject(row))}</td>
+            <td>${text(businessTypeText[row.businessType] || operationText[row.operation] || row.businessType || row.operation || '-')}</td>
+            <td title="${text(row.message || '')}">${badge(row.status)}</td>
+          </tr>
+        `).join('')}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function auditObject(row) {
+  const tableName = row.tableName || '';
+  if (!tableName && row.targetMessage) {
+    return row.targetMessage;
+  }
+  const label = tableText[tableName] || tableName || '业务事务';
+  return row.recordId ? `${label} #${row.recordId}` : label;
+}
+
+function renderBackupManage() {
+  const data = state.routeData.backups || { rows: [], page: 1, totalPages: 1, total: 0 };
+  state.backupPage = Number(data.page || 1);
+  const rows = data.rows || [];
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div><h2>逻辑备份</h2><p>${pageSummary(data)}；系统每天 02:00 调用备份脚本，并保留最近 10 份备份文件。</p></div>
+        <div class="panel-actions">
+          <button class="btn" data-action="reload-backups">刷新</button>
+          <button class="btn btn-primary" data-action="run-backup">立即备份</button>
+        </div>
+      </div>
+      ${backupTable(rows)}
+      ${renderPagination(Number(data.totalPages || 1), state.backupPage, 'backup-page')}
+    </section>
+  `;
+}
+
+function backupTable(rows) {
+  if (!rows.length) return empty('暂无备份记录');
+  return `
+    <div class="table-wrap">
+      <table class="backup-table">
+        <thead><tr><th class="col-date">开始时间</th><th class="col-date">结束时间</th><th class="col-code">数据库</th><th class="col-course">备份文件</th><th class="col-capacity">大小</th><th class="col-status">状态</th><th class="col-name">触发方式</th><th class="col-message">消息</th></tr></thead>
+        <tbody>${rows.map((row) => `
+          <tr>
+            <td>${text(row.startedAt)}</td>
+            <td>${text(row.endedAt || '-')}</td>
+            <td>${text(row.databaseName)}</td>
+            <td title="${text(`${row.backupDirectory || ''}/${row.fileName || ''}`)}">${text(row.fileName)}</td>
+            <td>${formatBytes(row.fileSizeBytes)}</td>
+            <td>${badge(row.status)}</td>
+            <td>${text(row.triggerType === 'manual' ? '手动' : '定时')}</td>
+            <td title="${text(row.message || '')}">${text(row.message || '-')}</td>
+          </tr>
+        `).join('')}</tbody>
+      </table>
     </div>
   `;
 }
@@ -1692,7 +1877,7 @@ document.addEventListener('click', async (event) => {
       await api(`/api/admin/courses/${target.dataset.id}/enable`, { method: 'POST' });
       await refresh('课程已启用');
     } else if (action === 'offering-delete') {
-      if (!confirm('确定要删除该课程班吗？该操作将同时清除所有学生的选课记录和相关成绩。')) return;
+      if (!confirm('确定要删除该课程班吗？无成绩且学期未结束时，系统会标记课程班为已删除；已有选课会统一退选。')) return;
       await api(`/api/admin/offerings/${target.dataset.id}`, { method: 'DELETE' });
       await refresh('课程班已删除');
     } else if (action === 'course-roster') {
@@ -1774,6 +1959,23 @@ document.addEventListener('click', async (event) => {
     } else if (action === 'course-catalog-page') {
       state.adminCoursePage = Number(target.dataset.page);
       renderShell();
+    } else if (action === 'log-page') {
+      state.logPage = Number(target.dataset.page);
+      await loadRoute(true);
+      renderShell();
+    } else if (action === 'backup-page') {
+      state.backupPage = Number(target.dataset.page);
+      await loadRoute(true);
+      renderShell();
+    } else if (action === 'reload-audit-logs') {
+      await refresh();
+    } else if (action === 'reload-backups') {
+      await refresh();
+    } else if (action === 'run-backup') {
+      if (!confirm('确定要立即执行一次数据库逻辑备份吗？')) return;
+      await api('/api/admin/backups/run', { method: 'POST' });
+      state.backupPage = 1;
+      await refresh('数据库备份已完成');
     } else if (action === 'student-page') {
       state.studentPage = Number(target.dataset.page);
       renderShell();

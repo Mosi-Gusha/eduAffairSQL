@@ -15,6 +15,7 @@ import java.util.Map;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.student.management.common.ApiException;
+import com.student.management.common.BusinessTransaction;
 import com.student.management.common.MapUtil;
 import com.student.management.common.PasswordUtil;
 import com.student.management.common.RedisCacheService;
@@ -29,7 +30,6 @@ import com.student.management.mapper.AdminMapper;
 import com.student.management.mapper.CommonMapper;
 import com.student.management.security.SessionUser;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AdminService {
@@ -41,11 +41,14 @@ public class AdminService {
     private final AdminMapper adminMapper;
     private final CommonMapper commonMapper;
     private final RedisCacheService cache;
+    private final TransactionAuditService auditService;
 
-    public AdminService(AdminMapper adminMapper, CommonMapper commonMapper, RedisCacheService cache) {
+    public AdminService(AdminMapper adminMapper, CommonMapper commonMapper, RedisCacheService cache,
+                        TransactionAuditService auditService) {
         this.adminMapper = adminMapper;
         this.commonMapper = commonMapper;
         this.cache = cache;
+        this.auditService = auditService;
     }
 
     public Map<String, Object> dashboard() {
@@ -73,7 +76,7 @@ public class AdminService {
         return cache.get("admin:users", LIST_TYPE, adminMapper::listUsers);
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "create_user", operation = "INSERT", tableName = "users")
     public Map<String, Object> createUser(CreateUserRequest request) {
         if ("admin".equals(request.role())) {
             throw new ApiException(400, "系统管理员账号只有一个，不能新增管理员");
@@ -89,6 +92,8 @@ public class AdminService {
                 defaultEmail(request.username(), request.role()),
                 roleId
         );
+        Long userId = adminMapper.lastInsertId();
+        auditInsert("users", userId, "username=" + request.username());
         clearTeachingCaches();
         return message("用户已创建");
     }
@@ -98,47 +103,55 @@ public class AdminService {
                 () -> adminMapper.listTeachers(keyword));
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "create_teacher", operation = "INSERT", tableName = "teachers")
     public Map<String, Object> createTeacher(TeacherRequest request) {
         Long roleId = adminMapper.roleIdByCode("teacher");
         adminMapper.insertUser(request.teacherNo(), PasswordUtil.hash(request.teacherNo()), request.name(), request.email(), roleId);
-        Long userId = adminMapper.userIdByUsername(request.teacherNo());
+        Long userId = adminMapper.lastInsertId();
+        auditInsert("users", userId, "teacher_no=" + request.teacherNo());
         adminMapper.insertTeacher(userId, request);
+        Long teacherId = adminMapper.lastInsertId();
+        auditInsert("teachers", teacherId, "user_id=" + userId);
         clearTeachingCaches();
         return message("教师已新增，初始密码为教师号");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "update_teacher", operation = "UPDATE", tableName = "teachers", recordIdArgIndex = 0)
     public Map<String, Object> updateTeacher(Long teacherId, TeacherRequest request) {
         Long userId = adminMapper.teacherUserId(teacherId);
         if (userId == null) {
             throw new ApiException(404, "教师不存在");
         }
         adminMapper.updateUserIdentity(userId, request.teacherNo(), request.name());
+        auditUpdate("users", userId, "identity");
         adminMapper.updateUserEmail(userId, request.email());
+        auditUpdate("users", userId, "email");
         adminMapper.updateTeacher(teacherId, request);
+        auditUpdate("teachers", teacherId, "profile");
         clearTeachingCaches();
         return message("教师信息已更新");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "disable_teacher", operation = "UPDATE", tableName = "teachers", recordIdArgIndex = 0)
     public Map<String, Object> disableTeacher(Long teacherId) {
         Long userId = adminMapper.teacherUserId(teacherId);
         if (userId == null) {
             throw new ApiException(404, "教师不存在");
         }
         adminMapper.updateUserStatus(userId, "disabled");
+        auditUpdate("users", userId, "status=disabled");
         clearTeachingCaches();
         return message("教师已弃用");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "enable_teacher", operation = "UPDATE", tableName = "teachers", recordIdArgIndex = 0)
     public Map<String, Object> enableTeacher(Long teacherId) {
         Long userId = adminMapper.teacherUserId(teacherId);
         if (userId == null) {
             throw new ApiException(404, "教师不存在");
         }
         adminMapper.updateUserStatus(userId, "enabled");
+        auditUpdate("users", userId, "status=enabled");
         clearTeachingCaches();
         return message("教师已启用");
     }
@@ -148,53 +161,61 @@ public class AdminService {
                 () -> adminMapper.listStudents(keyword));
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "create_student", operation = "INSERT", tableName = "students")
     public Map<String, Object> createStudent(StudentProfileRequest request) {
         Long roleId = adminMapper.roleIdByCode("student");
         adminMapper.insertUser(request.studentNo(), PasswordUtil.hash(request.studentNo()), request.name(),
                 request.email(), roleId);
-        Long userId = adminMapper.userIdByUsername(request.studentNo());
+        Long userId = adminMapper.lastInsertId();
+        auditInsert("users", userId, "student_no=" + request.studentNo());
         adminMapper.insertStudent(userId, request);
+        Long studentId = adminMapper.lastInsertId();
+        auditInsert("students", studentId, "user_id=" + userId);
         clearTeachingCaches();
         return message("学生已新增，初始密码为学号");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "update_student", operation = "UPDATE", tableName = "students", recordIdArgIndex = 0)
     public Map<String, Object> updateStudent(Long studentId, StudentProfileRequest request) {
         Long userId = adminMapper.studentUserId(studentId);
         if (userId == null) {
             throw new ApiException(404, "学生不存在");
         }
         adminMapper.updateUserIdentity(userId, request.studentNo(), request.name());
+        auditUpdate("users", userId, "identity");
         adminMapper.updateUserEmail(userId, request.email());
+        auditUpdate("users", userId, "email");
         adminMapper.updateStudent(studentId, request);
+        auditUpdate("students", studentId, "profile");
         clearTeachingCaches();
         return message("学生信息已更新");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "disable_student", operation = "UPDATE", tableName = "students", recordIdArgIndex = 0)
     public Map<String, Object> disableStudent(Long studentId) {
         Long userId = adminMapper.studentUserId(studentId);
         if (userId == null) {
             throw new ApiException(404, "学生不存在");
         }
         adminMapper.updateUserStatus(userId, "disabled");
+        auditUpdate("users", userId, "status=disabled");
         clearTeachingCaches();
         return message("学生已弃用");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "enable_student", operation = "UPDATE", tableName = "students", recordIdArgIndex = 0)
     public Map<String, Object> enableStudent(Long studentId) {
         Long userId = adminMapper.studentUserId(studentId);
         if (userId == null) {
             throw new ApiException(404, "学生不存在");
         }
         adminMapper.updateUserStatus(userId, "enabled");
+        auditUpdate("users", userId, "status=enabled");
         clearTeachingCaches();
         return message("学生已启用");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "delete_user", operation = "UPDATE", tableName = "users", recordIdArgIndex = 1)
     public Map<String, Object> deleteUser(SessionUser currentUser, Long userId) {
         if (currentUser.id().equals(userId)) {
             throw new ApiException(400, "不能删除当前登录账号");
@@ -207,6 +228,7 @@ public class AdminService {
             throw new ApiException(400, "系统管理员账号只有一个，不能删除");
         }
         adminMapper.updateUserStatus(userId, "disabled");
+        auditUpdate("users", userId, "status=disabled");
         clearTeachingCaches();
         return message("用户已删除");
     }
@@ -242,90 +264,136 @@ public class AdminService {
                 () -> adminMapper.listCourses(keyword));
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "create_course", operation = "INSERT", tableName = "courses")
     public Map<String, Object> createCourse(CourseRequest request) {
         adminMapper.insertCourse(request);
+        Long courseId = adminMapper.lastInsertId();
+        auditInsert("courses", courseId, "code=" + request.code());
         clearTeachingCaches();
         return message("课程已新增");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "enable_course", operation = "UPDATE", tableName = "courses", recordIdArgIndex = 0)
     public Map<String, Object> enableCourse(Long courseId) {
         int updated = adminMapper.updateCourseStatus(courseId, "enabled");
         if (updated == 0) {
             throw new ApiException(404, "课程不存在");
         }
+        auditUpdate("courses", courseId, "status=enabled");
         clearTeachingCaches();
         return message("课程已启用");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "disable_course", operation = "UPDATE", tableName = "courses", recordIdArgIndex = 0)
     public Map<String, Object> disableCourse(Long courseId) {
         int updated = adminMapper.updateCourseStatus(courseId, "disabled");
         if (updated == 0) {
             throw new ApiException(404, "课程不存在");
         }
+        auditUpdate("courses", courseId, "status=disabled");
         clearTeachingCaches();
         return message("课程已弃用");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "create_offering", operation = "INSERT", tableName = "course_offerings")
     public Map<String, Object> createOffering(CreateOfferingRequest request) {
+        lockActivePhasesInOrder(request.semesterId());
         validateOfferingTimes(request.times());
         validateOfferingResourceConflicts(null, request);
         validateCourseForNewOffering(request.courseId());
         validateExamRatio(request.examRatio());
         adminMapper.insertOffering(request);
         Long offeringId = adminMapper.lastInsertId();
+        auditInsert("course_offerings", offeringId, "course_id=" + request.courseId());
         adminMapper.insertOfferingTimes(offeringId, request.times());
+        auditInsert("course_offering_times", offeringId, "offering_id=" + offeringId + ", rows=" + request.times().size());
         clearTeachingCaches();
         return message("开课计划已创建");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "update_offering", operation = "UPSERT", tableName = "course_offerings", recordIdArgIndex = 0)
     public Map<String, Object> updateOffering(Long offeringId, CreateOfferingRequest request) {
         validateOfferingTimes(request.times());
-        validateOfferingResourceConflicts(offeringId, request);
         validateExamRatio(request.examRatio());
-        adminMapper.deleteOfferingTimes(offeringId);
-        adminMapper.updateOffering(offeringId, request);
+        validateEditableOfferingStatus(request.status());
+        lockOfferingMutation(offeringId, request.semesterId());
+        validateOfferingResourceConflicts(offeringId, request);
+        validateOfferingStudentScheduleConflicts(offeringId, request);
+        if (adminMapper.countEditableOfferingById(offeringId) == 0) {
+            throw new ApiException(404, "课程班不存在或已删除");
+        }
+        int deletedTimes = adminMapper.deleteOfferingTimes(offeringId);
+        auditDelete("course_offering_times", offeringId, "offering_id=" + offeringId + ", rows=" + deletedTimes);
+        int updated = adminMapper.updateOffering(offeringId, request);
+        if (updated == 0) {
+            throw new ApiException(404, "课程班不存在或已删除");
+        }
+        auditUpdate("course_offerings", offeringId, "status=" + request.status());
         adminMapper.insertOfferingTimes(offeringId, request.times());
+        auditInsert("course_offering_times", offeringId, "offering_id=" + offeringId + ", rows=" + request.times().size());
         clearTeachingCaches();
         return message("课程信息已更新");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "delete_offering", operation = "UPDATE", tableName = "course_offerings", recordIdArgIndex = 0)
     public Map<String, Object> deleteOffering(Long offeringId) {
-        adminMapper.deleteGradesByOffering(offeringId);
-        adminMapper.deleteEnrollmentsByOffering(offeringId);
-        adminMapper.deleteOffering(offeringId);
+        lockOfferingCascadeForDelete(offeringId);
+        Map<String, Object> snapshot = adminMapper.offeringDeleteSnapshot(offeringId);
+        if (snapshot == null) {
+            throw new ApiException(404, "课程班不存在");
+        }
+        adminMapper.lockEnrollmentsByOffering(offeringId);
+        adminMapper.lockGradesByOffering(offeringId);
+        if ("deleted".equals(MapUtil.stringValue(snapshot, "status"))) {
+            throw new ApiException(400, "课程班已删除");
+        }
+        if (MapUtil.booleanValue(snapshot, "semesterEnded")) {
+            throw new ApiException(400, "课程班所在学期已结束，不能删除");
+        }
+        if (MapUtil.longValue(snapshot, "gradeCount") > 0) {
+            throw new ApiException(400, "该课程班已有成绩，不能删除");
+        }
+        long selectedCount = MapUtil.longValue(snapshot, "selectedEnrollmentCount");
+        if (selectedCount > 0) {
+            int dropped = adminMapper.dropSelectedEnrollmentsByOffering(offeringId);
+            auditUpdate("enrollments", offeringId, "offering_id=" + offeringId + ", dropped=" + dropped);
+        }
+        int updated = adminMapper.markOfferingDeleted(offeringId);
+        if (updated == 0) {
+            throw new ApiException(400, "课程班已删除");
+        }
+        auditUpdate("course_offerings", offeringId, "status=deleted");
         clearTeachingCaches();
-        return message("课程班已删除，相关选课和成绩记录已一并清除");
+        return message(selectedCount > 0 ? "课程班已删除，相关选课已退选" : "课程班已删除");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "create_semester", operation = "INSERT", tableName = "semesters")
     public Map<String, Object> createSemester(SemesterRequest request) {
         validateSemesterRange(null, request);
         adminMapper.insertSemester(request);
+        Long semesterId = adminMapper.lastInsertId();
+        auditInsert("semesters", semesterId, "name=" + request.name());
         clearTeachingCaches();
         return message("学期已新建，可开始维护该学期课程");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "update_semester", operation = "UPDATE", tableName = "semesters", recordIdArgIndex = 0)
     public Map<String, Object> updateSemester(Long semesterId, SemesterRequest request) {
         if (adminMapper.countSemesterById(semesterId) == 0) {
             throw new ApiException(400, "学期不存在");
         }
+        lockActivePhasesInOrder(semesterId);
         validateSemesterRange(semesterId, request);
         int updated = adminMapper.updateSemester(semesterId, request);
         if (updated == 0) {
             throw new ApiException(400, "学期不存在");
         }
+        auditUpdate("semesters", semesterId, "range/max_credit");
         clearTeachingCaches();
         return message("学期信息已更新");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "start_selection", operation = "UPSERT", tableName = "semester_active_phases", recordIdArgIndex = 0)
     public Map<String, Object> startSemesterSelection(Long semesterId) {
         ensureSemesterExists(semesterId);
         if ("archived".equals(adminMapper.semesterStatusById(semesterId))) {
@@ -334,21 +402,26 @@ public class AdminService {
         if (adminMapper.countOpenGradingBySemester(semesterId) > 0) {
             throw new ApiException(400, "该学期正在登分，不能同时开放选课");
         }
-        adminMapper.closeAllSelectionSemesters();
+        adminMapper.lockAllActivePhases();
+        int closed = adminMapper.closeAllSelectionSemesters();
+        auditDelete("semester_active_phases", null, "phase=selection, rows=" + closed);
         adminMapper.updateSemesterSelectionOpen(semesterId, true);
+        auditUpsert("semester_active_phases", semesterId, "phase=selection");
         clearTeachingCaches();
         return message("选课已开放");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "stop_selection", operation = "DELETE", tableName = "semester_active_phases", recordIdArgIndex = 0)
     public Map<String, Object> stopSemesterSelection(Long semesterId) {
         ensureSemesterExists(semesterId);
-        adminMapper.updateSemesterSelectionOpen(semesterId, false);
+        lockActivePhasesInOrder(semesterId);
+        int updated = adminMapper.updateSemesterSelectionOpen(semesterId, false);
+        auditDelete("semester_active_phases", semesterId, "phase=selection, rows=" + updated);
         clearTeachingCaches();
         return message("选课已关闭");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "start_grading", operation = "UPSERT", tableName = "semester_active_phases", recordIdArgIndex = 0)
     public Map<String, Object> startSemesterGrading(Long semesterId) {
         ensureSemesterExists(semesterId);
         if ("not_started".equals(adminMapper.semesterStatusById(semesterId))) {
@@ -357,16 +430,21 @@ public class AdminService {
         if (adminMapper.countOpenSelectionBySemester(semesterId) > 0) {
             throw new ApiException(400, "该学期正在选课，不能同时开放登分");
         }
-        adminMapper.closeAllGradingSemesters();
+        adminMapper.lockAllActivePhases();
+        int closed = adminMapper.closeAllGradingSemesters();
+        auditDelete("semester_active_phases", null, "phase=grading, rows=" + closed);
         adminMapper.updateSemesterGradingOpen(semesterId, true);
+        auditUpsert("semester_active_phases", semesterId, "phase=grading");
         clearTeachingCaches();
         return message("登分已开放");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "stop_grading", operation = "DELETE", tableName = "semester_active_phases", recordIdArgIndex = 0)
     public Map<String, Object> stopSemesterGrading(Long semesterId) {
         ensureSemesterExists(semesterId);
-        adminMapper.updateSemesterGradingOpen(semesterId, false);
+        lockActivePhasesInOrder(semesterId);
+        int updated = adminMapper.updateSemesterGradingOpen(semesterId, false);
+        auditDelete("semester_active_phases", semesterId, "phase=grading, rows=" + updated);
         clearTeachingCaches();
         return message("登分已关闭");
     }
@@ -380,35 +458,29 @@ public class AdminService {
                 () -> adminMapper.courseRoster(offeringId));
     }
 
-    @Transactional
-    public Map<String, Object> adminSelectCourse(String studentNo, Long offeringId) {
+    public Map<String, Object> adminSelectCourse(SessionUser user, String studentNo, Long offeringId) {
         Long studentId = adminMapper.studentIdByNoOrUsername(studentNo);
         if (studentId == null) {
             throw new ApiException(404, "学生不存在");
         }
-        adminMapper.adminSelectCourse(studentId, offeringId);
+        adminMapper.adminSelectCourse(studentId, offeringId, user.id());
         clearTeachingCaches();
         return message("已为学生选课");
     }
 
-    @Transactional
-    public Map<String, Object> adminDropCourse(String studentNo, Long offeringId) {
+    public Map<String, Object> adminDropCourse(SessionUser user, String studentNo, Long offeringId) {
         Long studentId = adminMapper.studentIdByNoOrUsername(studentNo);
         if (studentId == null) {
             throw new ApiException(404, "学生不存在");
         }
-        adminMapper.adminDropCourse(studentId, offeringId);
+        adminMapper.adminDropCourse(studentId, offeringId, user.id());
         clearTeachingCaches();
         return message("已为学生退课");
     }
 
-    @Transactional
-    public Map<String, Object> adminDropEnrollment(Long enrollmentId) {
-        int updated = adminMapper.adminDropEnrollment(enrollmentId);
+    public Map<String, Object> adminDropEnrollment(SessionUser user, Long enrollmentId) {
+        adminMapper.adminDropEnrollment(enrollmentId, user.id());
         clearTeachingCaches();
-        if (updated == 0) {
-            throw new ApiException(400, "未找到有效选课记录");
-        }
         return message("已退选");
     }
 
@@ -428,29 +500,48 @@ public class AdminService {
                 () -> nullToEmpty(adminMapper.courseGradeStats(offeringId)));
     }
 
-    @Transactional
+    public Map<String, Object> transactionLogs(Integer page, Integer pageSize) {
+        int safePageSize = clampPageSize(pageSize);
+        long total = adminMapper.countTransactionSummaries();
+        int totalPages = totalPages(total, safePageSize);
+        int safePage = clampPage(page, totalPages);
+        int offset = (safePage - 1) * safePageSize;
+        return mapOf(
+                "rows", adminMapper.listTransactionSummaries(safePageSize, offset),
+                "page", safePage,
+                "pageSize", safePageSize,
+                "total", total,
+                "totalPages", totalPages
+        );
+    }
+
+    @BusinessTransaction(businessType = "create_notice", operation = "INSERT", tableName = "notices")
     public Map<String, Object> createNotice(SessionUser user, NoticeRequest request) {
         adminMapper.insertNotice(request, user.id());
+        Long noticeId = adminMapper.lastInsertId();
+        auditInsert("notices", noticeId, "audience=" + request.audience());
         clearTeachingCaches();
         return message("通知已发布");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "update_notice", operation = "UPDATE", tableName = "notices", recordIdArgIndex = 0)
     public Map<String, Object> updateNotice(Long noticeId, NoticeRequest request) {
         int updated = adminMapper.updateNotice(noticeId, request);
         if (updated == 0) {
             throw new ApiException(404, "通知不存在");
         }
+        auditUpdate("notices", noticeId, "audience=" + request.audience());
         clearTeachingCaches();
         return message("通知已更新");
     }
 
-    @Transactional
+    @BusinessTransaction(businessType = "delete_notice", operation = "DELETE", tableName = "notices", recordIdArgIndex = 0)
     public Map<String, Object> deleteNotice(Long noticeId) {
         int deleted = adminMapper.deleteNotice(noticeId);
         if (deleted == 0) {
             throw new ApiException(404, "通知不存在");
         }
+        auditDelete("notices", noticeId, "rows=" + deleted);
         clearTeachingCaches();
         return message("通知已删除");
     }
@@ -477,6 +568,73 @@ public class AdminService {
 
     private void clearTeachingCaches() {
         cache.evictByPrefix("admin:", "student:", "teacher:");
+    }
+
+    private void auditInsert(String tableName, Long recordId, String message) {
+        auditService.logStep("INSERT", tableName, recordId, "success", message);
+    }
+
+    private void auditUpdate(String tableName, Long recordId, String message) {
+        auditService.logStep("UPDATE", tableName, recordId, "success", message);
+    }
+
+    private void auditDelete(String tableName, Long recordId, String message) {
+        auditService.logStep("DELETE", tableName, recordId, "success", message);
+    }
+
+    private void auditUpsert(String tableName, Long recordId, String message) {
+        auditService.logStep("UPSERT", tableName, recordId, "success", message);
+    }
+
+    private void lockOfferingMutation(Long offeringId, Long requestedSemesterId) {
+        Long existingSemesterId = adminMapper.offeringSemesterId(offeringId);
+        if (existingSemesterId == null) {
+            throw new ApiException(404, "课程班不存在或已删除");
+        }
+        adminMapper.lockSelectedStudentsByOffering(offeringId);
+        lockActivePhasesInOrder(existingSemesterId, requestedSemesterId);
+        Long lockedOfferingId = adminMapper.lockEditableOfferingById(offeringId);
+        if (lockedOfferingId == null) {
+            throw new ApiException(404, "课程班不存在或已删除");
+        }
+        adminMapper.lockEnrollmentsByOffering(offeringId);
+    }
+
+    private void lockOfferingCascadeForDelete(Long offeringId) {
+        adminMapper.lockSelectedStudentsByOffering(offeringId);
+        adminMapper.lockActivePhasesByOffering(offeringId);
+    }
+
+    private void lockActivePhasesInOrder(Long... semesterIds) {
+        List<Long> ids = new ArrayList<>();
+        for (Long semesterId : semesterIds) {
+            if (semesterId != null && !ids.contains(semesterId)) {
+                ids.add(semesterId);
+            }
+        }
+        ids.sort(Long::compareTo);
+        if (!ids.isEmpty()) {
+            adminMapper.lockActivePhasesBySemesters(ids);
+        }
+    }
+
+    static int clampPageSize(Integer pageSize) {
+        if (pageSize == null) {
+            return 10;
+        }
+        return Math.max(1, Math.min(pageSize, 10));
+    }
+
+    static int clampPage(Integer page, int totalPages) {
+        int current = page == null ? 1 : page;
+        return Math.max(1, Math.min(current, Math.max(totalPages, 1)));
+    }
+
+    static int totalPages(long total, int pageSize) {
+        if (total <= 0) {
+            return 1;
+        }
+        return (int) Math.ceil((double) total / (double) pageSize);
     }
 
     private String defaultEmail(String username, String role) {
@@ -682,6 +840,12 @@ public class AdminService {
         }
     }
 
+    private void validateEditableOfferingStatus(String status) {
+        if (!"selecting".equals(status) && !"closed".equals(status)) {
+            throw new ApiException(400, "课程班状态只能是选课中或已结课");
+        }
+    }
+
     private void validateOfferingTimes(List<CreateOfferingRequest.OfferingTimeRequest> times) {
         if (times == null || times.isEmpty()) {
             throw new ApiException(400, "至少需要一个上课时间段");
@@ -722,6 +886,14 @@ public class AdminService {
                 request.teacherId(), request.times());
         if (conflicts > 0) {
             throw new ApiException(400, "同一时间教师或教室已有课程安排");
+        }
+    }
+
+    private void validateOfferingStudentScheduleConflicts(Long offeringId, CreateOfferingRequest request) {
+        int conflicts = adminMapper.countOfferingStudentScheduleConflicts(offeringId, request.semesterId(),
+                request.times());
+        if (conflicts > 0) {
+            throw new ApiException(400, "student course time conflict after offering time change");
         }
     }
 

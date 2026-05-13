@@ -7,7 +7,6 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
-import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.mapping.StatementType;
 
 @Mapper
@@ -56,32 +55,15 @@ public interface StudentMapper {
     List<Map<String, Object>> listCurrentOfferings(@Param("studentId") Long studentId, @Param("semesterId") Long semesterId,
                                                     @Param("keyword") String keyword);
 
-    @Select("{ CALL sp_select_course(#{studentId, mode=IN, jdbcType=BIGINT}, #{offeringId, mode=IN, jdbcType=BIGINT}) }")
+    @Select("{ CALL sp_select_course(#{studentId, mode=IN, jdbcType=BIGINT}, #{offeringId, mode=IN, jdbcType=BIGINT}, #{actorUserId, mode=IN, jdbcType=BIGINT}) }")
     @Options(statementType = StatementType.CALLABLE)
-    void callSelectCourse(@Param("studentId") Long studentId, @Param("offeringId") Long offeringId);
+    void callSelectCourse(@Param("studentId") Long studentId, @Param("offeringId") Long offeringId,
+                          @Param("actorUserId") Long actorUserId);
 
-    @Update("""
-            UPDATE enrollments
-               SET status = 'dropped'
-             WHERE id = #{enrollmentId} AND student_id = #{studentId} AND status = 'selected'
-               AND EXISTS (
-                    SELECT 1
-                      FROM course_offerings co
-                      JOIN semester_active_phases sap
-                        ON sap.semester_id = co.semester_id
-                       AND sap.phase = 'selection'
-                     WHERE co.id = enrollments.offering_id
-               )
-            """)
-    int dropCourse(@Param("studentId") Long studentId, @Param("enrollmentId") Long enrollmentId);
-
-    @Select("""
-            SELECT COUNT(*) > 0
-              FROM grade_results
-             WHERE enrollment_id = #{enrollmentId}
-               AND final_score IS NOT NULL
-            """)
-    boolean isEnrollmentGraded(@Param("enrollmentId") Long enrollmentId);
+    @Select("{ CALL sp_student_drop_course(#{studentId, mode=IN, jdbcType=BIGINT}, #{enrollmentId, mode=IN, jdbcType=BIGINT}, #{actorUserId, mode=IN, jdbcType=BIGINT}) }")
+    @Options(statementType = StatementType.CALLABLE)
+    void callStudentDropCourse(@Param("studentId") Long studentId, @Param("enrollmentId") Long enrollmentId,
+                               @Param("actorUserId") Long actorUserId);
 
     @Select("""
             <script>
@@ -95,6 +77,7 @@ public interface StudentMapper {
               JOIN users u ON u.id = t.user_id
               JOIN semesters s ON s.id = co.semester_id
              WHERE e.student_id = #{studentId} AND e.status = 'selected'
+               AND co.status != 'deleted'
              <choose>
              <when test="semesterId != null">
                AND s.id = #{semesterId}
@@ -122,6 +105,7 @@ public interface StudentMapper {
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.student_id = #{studentId}
                AND e.status = 'selected'
+               AND co.status != 'deleted'
                AND g.final_score IS NOT NULL
              ORDER BY s.start_date DESC, c.code
             """)
@@ -139,6 +123,7 @@ public interface StudentMapper {
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.student_id = #{studentId}
                AND e.status = 'selected'
+               AND co.status != 'deleted'
                AND (#{semesterId} IS NULL OR s.id = #{semesterId})
                AND g.final_score IS NOT NULL
              ORDER BY s.start_date DESC, c.code
@@ -156,7 +141,9 @@ public interface StudentMapper {
             """ + CURRENT_SEMESTER_ID_SQL + """
               ) current_semester ON 1 = 1
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
-             WHERE e.student_id = #{studentId} AND e.status = 'selected'
+             WHERE e.student_id = #{studentId}
+               AND e.status = 'selected'
+               AND co.status != 'deleted'
             """)
     Map<String, Object> dashboard(@Param("studentId") Long studentId);
 }

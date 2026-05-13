@@ -42,7 +42,13 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
 
         request.setAttribute(CURRENT_USER, user);
+        CurrentUserContext.set(user);
         return true;
+    }
+
+    @Override
+    public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
+        CurrentUserContext.clear();
     }
 
     private String resolveToken(HttpServletRequest request) {

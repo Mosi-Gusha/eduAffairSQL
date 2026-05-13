@@ -27,7 +27,7 @@ public interface AdminMapper {
     @Select("SELECT COUNT(*) FROM courses WHERE status = 'enabled'")
     long countEnabledCourses();
 
-    @Select("SELECT COUNT(*) FROM course_offerings")
+    @Select("SELECT COUNT(*) FROM course_offerings WHERE status != 'deleted'")
     long countOfferings();
 
     @Select("SELECT COUNT(*) FROM enrollments WHERE status = 'selected'")
@@ -247,6 +247,9 @@ public interface AdminMapper {
     @Select("SELECT status FROM courses WHERE id = #{courseId}")
     String courseStatus(@Param("courseId") Long courseId);
 
+    @Select("SELECT id FROM courses WHERE code = #{code}")
+    Long courseIdByCode(@Param("code") String code);
+
     @Insert("""
             INSERT INTO courses(code, name, department_id, credit, status)
             VALUES(#{code}, #{name}, #{departmentId}, #{credit}, 'enabled')
@@ -268,7 +271,7 @@ public interface AdminMapper {
               FROM teachers t
               JOIN users u ON u.id = t.user_id
               JOIN departments d ON d.id = t.department_id
-              LEFT JOIN course_offerings co ON co.teacher_id = t.id
+              LEFT JOIN course_offerings co ON co.teacher_id = t.id AND co.status != 'deleted'
               LEFT JOIN courses c ON c.id = co.course_id
              WHERE 1 = 1
              <if test="keyword != null and keyword != ''">
@@ -303,6 +306,9 @@ public interface AdminMapper {
     @Select("SELECT user_id FROM teachers WHERE id = #{teacherId}")
     Long teacherUserId(@Param("teacherId") Long teacherId);
 
+    @Select("SELECT id FROM teachers WHERE teacher_no = #{teacherNo}")
+    Long teacherIdByNo(@Param("teacherNo") String teacherNo);
+
     @Select("""
             <script>
             SELECT s.id AS studentId, s.student_no AS studentNo, u.id AS userId, u.username,
@@ -314,7 +320,7 @@ public interface AdminMapper {
               JOIN majors m ON m.id = s.major_id
               JOIN departments d ON d.id = m.department_id
               LEFT JOIN enrollments e ON e.student_id = s.id AND e.status = 'selected'
-              LEFT JOIN course_offerings co ON co.id = e.offering_id
+              LEFT JOIN course_offerings co ON co.id = e.offering_id AND co.status != 'deleted'
               LEFT JOIN courses c ON c.id = co.course_id
              WHERE 1 = 1
              <if test="keyword != null and keyword != ''">
@@ -351,6 +357,9 @@ public interface AdminMapper {
     @Select("SELECT user_id FROM students WHERE id = #{studentId}")
     Long studentUserId(@Param("studentId") Long studentId);
 
+    @Select("SELECT id FROM students WHERE student_no = #{studentNo}")
+    Long studentIdByNo(@Param("studentNo") String studentNo);
+
     @Select("""
             <script>
             SELECT co.id, co.capacity, co.selected_count AS selectedCount,
@@ -360,13 +369,13 @@ public interface AdminMapper {
                    s.id AS semesterId, s.name AS semesterName,
                    u.display_name AS teacherName,
                    t.id AS teacherId, t.teacher_no AS teacherNo
-              FROM course_offering_stats co
+             FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN departments d ON d.id = c.department_id
               JOIN semesters s ON s.id = co.semester_id
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
-             WHERE 1 = 1
+             WHERE co.status != 'deleted'
              <if test="keyword != null and keyword != ''">
                AND (c.code LIKE CONCAT('%', #{keyword}, '%')
                     OR c.name LIKE CONCAT('%', #{keyword}, '%')
@@ -408,6 +417,86 @@ public interface AdminMapper {
     @Select("SELECT LAST_INSERT_ID()")
     Long lastInsertId();
 
+    @Select("SELECT semester_id FROM course_offerings WHERE id = #{offeringId}")
+    Long offeringSemesterId(@Param("offeringId") Long offeringId);
+
+    @Select("""
+            <script>
+            SELECT phase
+              FROM semester_active_phases
+             WHERE semester_id IN
+             <foreach collection="semesterIds" item="semesterId" open="(" separator="," close=")">
+               #{semesterId}
+             </foreach>
+             ORDER BY semester_id, phase
+             FOR UPDATE
+            </script>
+            """)
+    List<String> lockActivePhasesBySemesters(@Param("semesterIds") List<Long> semesterIds);
+
+    @Select("""
+            SELECT sap.phase
+              FROM semester_active_phases sap
+              JOIN course_offerings co ON co.semester_id = sap.semester_id
+             WHERE co.id = #{offeringId}
+             ORDER BY sap.phase
+             FOR UPDATE
+            """)
+    List<String> lockActivePhasesByOffering(@Param("offeringId") Long offeringId);
+
+    @Select("""
+            SELECT phase
+              FROM semester_active_phases
+             ORDER BY phase
+             FOR UPDATE
+            """)
+    List<String> lockAllActivePhases();
+
+    @Select("""
+            SELECT id
+              FROM course_offerings
+             WHERE id = #{offeringId}
+               AND status != 'deleted'
+             FOR UPDATE
+            """)
+    Long lockEditableOfferingById(@Param("offeringId") Long offeringId);
+
+    @Select("""
+            SELECT id
+              FROM students
+             WHERE id IN (
+                   SELECT student_id
+                     FROM enrollments
+                    WHERE offering_id = #{offeringId}
+                      AND status = 'selected'
+             )
+             ORDER BY id
+             FOR UPDATE
+            """)
+    List<Long> lockSelectedStudentsByOffering(@Param("offeringId") Long offeringId);
+
+    @Select("""
+            SELECT id
+              FROM enrollments
+             WHERE offering_id = #{offeringId}
+             ORDER BY id
+             FOR UPDATE
+            """)
+    List<Long> lockEnrollmentsByOffering(@Param("offeringId") Long offeringId);
+
+    @Select("""
+            SELECT g.id
+              FROM grades g
+              JOIN enrollments e ON e.id = g.enrollment_id
+             WHERE e.offering_id = #{offeringId}
+             ORDER BY g.id
+             FOR UPDATE
+            """)
+    List<Long> lockGradesByOffering(@Param("offeringId") Long offeringId);
+
+    @Select("SELECT COUNT(*) FROM course_offerings WHERE id = #{offeringId} AND status != 'deleted'")
+    int countEditableOfferingById(@Param("offeringId") Long offeringId);
+
     @Insert("""
             <script>
             INSERT INTO course_offering_times(offering_id, classroom_id, day_of_week, start_section, end_section,
@@ -425,7 +514,7 @@ public interface AdminMapper {
     @Select("""
             <script>
             SELECT COUNT(*)
-              FROM course_offerings co
+             FROM course_offerings co
               JOIN course_offering_times existing_time ON existing_time.offering_id = co.id
               JOIN (
                 <foreach collection="times" item="time" separator=" UNION ALL ">
@@ -439,6 +528,7 @@ public interface AdminMapper {
                 </foreach>
               ) request_time
              WHERE co.semester_id = #{semesterId}
+               AND co.status != 'deleted'
                AND (#{offeringId} IS NULL OR co.id != #{offeringId})
                AND (co.teacher_id = #{teacherId} OR existing_time.classroom_id = request_time.classroom_id)
                AND existing_time.day_of_week = request_time.day_of_week
@@ -455,6 +545,47 @@ public interface AdminMapper {
                                        @Param("semesterId") Long semesterId,
                                        @Param("teacherId") Long teacherId,
                                        @Param("times") List<CreateOfferingRequest.OfferingTimeRequest> times);
+
+    @Select("""
+            <script>
+            SELECT COUNT(*)
+              FROM enrollments current_enrollment
+              JOIN course_offerings current_offering ON current_offering.id = #{offeringId}
+              JOIN enrollments other_enrollment
+                ON other_enrollment.student_id = current_enrollment.student_id
+               AND other_enrollment.status = 'selected'
+               AND other_enrollment.offering_id != current_enrollment.offering_id
+              JOIN course_offerings other_offering
+                ON other_offering.id = other_enrollment.offering_id
+               AND other_offering.semester_id = #{semesterId}
+               AND other_offering.status != 'deleted'
+              JOIN course_offering_times other_time ON other_time.offering_id = other_offering.id
+              JOIN (
+                <foreach collection="times" item="time" separator=" UNION ALL ">
+                  SELECT #{time.dayOfWeek} AS day_of_week,
+                         #{time.startSection} AS start_section,
+                         #{time.endSection} AS end_section,
+                         #{time.startWeek} AS start_week,
+                         #{time.endWeek} AS end_week,
+                         #{time.weekType} AS week_type
+                </foreach>
+              ) request_time
+             WHERE current_enrollment.offering_id = #{offeringId}
+               AND current_enrollment.status = 'selected'
+               AND current_offering.status != 'deleted'
+               AND other_time.day_of_week = request_time.day_of_week
+               AND NOT (other_time.end_section &lt; request_time.start_section
+                        OR other_time.start_section &gt; request_time.end_section)
+               AND NOT (other_time.end_week &lt; request_time.start_week
+                        OR other_time.start_week &gt; request_time.end_week)
+               AND (other_time.week_type = 'all'
+                    OR request_time.week_type = 'all'
+                    OR other_time.week_type = request_time.week_type)
+            </script>
+            """)
+    int countOfferingStudentScheduleConflicts(@Param("offeringId") Long offeringId,
+                                              @Param("semesterId") Long semesterId,
+                                              @Param("times") List<CreateOfferingRequest.OfferingTimeRequest> times);
 
     @Update("""
             UPDATE course_offerings
@@ -474,18 +605,44 @@ public interface AdminMapper {
     @Update("UPDATE course_offerings SET status = 'closed' WHERE id = #{offeringId}")
     int closeOffering(@Param("offeringId") Long offeringId);
 
-    @org.apache.ibatis.annotations.Delete("""
-            DELETE FROM grades WHERE enrollment_id IN (
-                SELECT id FROM enrollments WHERE offering_id = #{offeringId}
-            )
+    @Select("""
+            SELECT co.id,
+                   co.status,
+                   co.semester_id AS semesterId,
+                   s.end_date < CURDATE() AS semesterEnded,
+                   (SELECT COUNT(*)
+                      FROM enrollments e
+                     WHERE e.offering_id = co.id) AS enrollmentCount,
+                   (SELECT COUNT(*)
+                      FROM enrollments e
+                     WHERE e.offering_id = co.id
+                       AND e.status = 'selected') AS selectedEnrollmentCount,
+                   (SELECT COUNT(*)
+                      FROM grades g
+                      JOIN enrollments e ON e.id = g.enrollment_id
+                     WHERE e.offering_id = co.id) AS gradeCount
+              FROM course_offerings co
+              JOIN semesters s ON s.id = co.semester_id
+             WHERE co.id = #{offeringId}
+             FOR UPDATE
             """)
-    int deleteGradesByOffering(@Param("offeringId") Long offeringId);
+    Map<String, Object> offeringDeleteSnapshot(@Param("offeringId") Long offeringId);
 
-    @org.apache.ibatis.annotations.Delete("DELETE FROM enrollments WHERE offering_id = #{offeringId}")
-    int deleteEnrollmentsByOffering(@Param("offeringId") Long offeringId);
+    @Update("""
+            UPDATE enrollments
+               SET status = 'dropped'
+             WHERE offering_id = #{offeringId}
+               AND status = 'selected'
+            """)
+    int dropSelectedEnrollmentsByOffering(@Param("offeringId") Long offeringId);
 
-    @org.apache.ibatis.annotations.Delete("DELETE FROM course_offerings WHERE id = #{offeringId}")
-    int deleteOffering(@Param("offeringId") Long offeringId);
+    @Update("""
+            UPDATE course_offerings
+               SET status = 'deleted'
+             WHERE id = #{offeringId}
+               AND status != 'deleted'
+            """)
+    int markOfferingDeleted(@Param("offeringId") Long offeringId);
 
     @Select("""
             SELECT co.id AS offeringId, c.code AS courseCode, c.name AS courseName,
@@ -529,23 +686,19 @@ public interface AdminMapper {
             """)
     Long studentIdByNoOrUsername(@Param("keyword") String keyword);
 
-    @Select("{ CALL sp_select_course(#{studentId, mode=IN, jdbcType=BIGINT}, #{offeringId, mode=IN, jdbcType=BIGINT}) }")
+    @Select("{ CALL sp_select_course(#{studentId, mode=IN, jdbcType=BIGINT}, #{offeringId, mode=IN, jdbcType=BIGINT}, #{actorUserId, mode=IN, jdbcType=BIGINT}) }")
     @Options(statementType = StatementType.CALLABLE)
-    void adminSelectCourse(@Param("studentId") Long studentId, @Param("offeringId") Long offeringId);
+    void adminSelectCourse(@Param("studentId") Long studentId, @Param("offeringId") Long offeringId,
+                           @Param("actorUserId") Long actorUserId);
 
-    @Update("""
-            UPDATE enrollments
-               SET status = 'dropped'
-             WHERE student_id = #{studentId} AND offering_id = #{offeringId} AND status = 'selected'
-            """)
-    int adminDropCourse(@Param("studentId") Long studentId, @Param("offeringId") Long offeringId);
+    @Select("{ CALL sp_admin_drop_course(#{studentId, mode=IN, jdbcType=BIGINT}, #{offeringId, mode=IN, jdbcType=BIGINT}, #{actorUserId, mode=IN, jdbcType=BIGINT}) }")
+    @Options(statementType = StatementType.CALLABLE)
+    void adminDropCourse(@Param("studentId") Long studentId, @Param("offeringId") Long offeringId,
+                         @Param("actorUserId") Long actorUserId);
 
-    @Update("""
-            UPDATE enrollments
-               SET status = 'dropped'
-             WHERE id = #{enrollmentId} AND status = 'selected'
-            """)
-    int adminDropEnrollment(@Param("enrollmentId") Long enrollmentId);
+    @Select("{ CALL sp_admin_drop_enrollment(#{enrollmentId, mode=IN, jdbcType=BIGINT}, #{actorUserId, mode=IN, jdbcType=BIGINT}) }")
+    @Options(statementType = StatementType.CALLABLE)
+    void adminDropEnrollment(@Param("enrollmentId") Long enrollmentId, @Param("actorUserId") Long actorUserId);
 
     @Select("""
             SELECT e.id AS enrollmentId, co.id AS offeringId, c.code AS courseCode, c.name AS courseName,
@@ -615,10 +768,11 @@ public interface AdminMapper {
                    co.capacity, co.selected_count AS selectedCount,
                    co.exam_ratio AS examRatio,
                    s.id AS semesterId, s.name AS semesterName
-              FROM course_offering_stats co
+             FROM course_offering_stats co
               JOIN courses c ON c.id = co.course_id
               JOIN semesters s ON s.id = co.semester_id
              WHERE co.teacher_id = #{teacherId}
+               AND co.status != 'deleted'
              <choose>
              <when test="semesterId != null">
                AND s.id = #{semesterId}
@@ -650,6 +804,7 @@ public interface AdminMapper {
               JOIN users u ON u.id = t.user_id
              WHERE e.student_id = #{studentId}
                AND e.status = 'selected'
+               AND co.status != 'deleted'
              <choose>
              <when test="semesterId != null">
                AND s.id = #{semesterId}
@@ -665,4 +820,86 @@ public interface AdminMapper {
             """)
     List<Map<String, Object>> studentEnrollmentsBySemester(@Param("studentId") Long studentId,
                                                            @Param("semesterId") Long semesterId);
+
+    @Select("SELECT COUNT(*) FROM transactions")
+    long countTransactionSummaries();
+
+    @Select("""
+            SELECT tx.transaction_id AS transactionId,
+                   tx.business_type AS businessType,
+                   tx.actor_user_id AS actorUserId,
+                   actor.display_name AS actorName,
+                   COALESCE(detail.operation,
+                            CASE WHEN tx.final_status = 'committed' THEN 'COMMIT' ELSE 'ROLLBACK' END) AS operation,
+                   COALESCE(detail.table_name, failure_entry.table_name) AS tableName,
+                   COALESCE(detail.record_id, failure_entry.record_id) AS recordId,
+                   CASE
+                     WHEN tx.final_status = 'committed' THEN 'success'
+                     WHEN tx.final_status = 'started' THEN 'started'
+                     ELSE 'failed'
+                   END AS status,
+                   COALESCE(detail.message, failure_entry.message, start_entry.message) AS message,
+                   start_entry.message AS targetMessage,
+                   COALESCE(tx.ended_at, tx.started_at) AS createdAt,
+                   tx.started_at AS transactionStartedAt,
+                   tx.ended_at AS transactionEndedAt,
+                   tx.final_status AS finalStatus
+              FROM transactions tx
+              LEFT JOIN users actor ON actor.id = tx.actor_user_id
+              LEFT JOIN transaction_log_entries detail
+                ON detail.id = (
+                     SELECT le.id
+                       FROM transaction_log_entries le
+                      WHERE le.transaction_id = tx.transaction_id
+                        AND le.operation NOT IN ('START', 'COMMIT', 'ROLLBACK')
+                      ORDER BY le.id DESC
+                      LIMIT 1
+                   )
+              LEFT JOIN transaction_log_entries failure_entry
+                ON failure_entry.id = (
+                     SELECT le.id
+                       FROM transaction_log_entries le
+                      WHERE le.transaction_id = tx.transaction_id
+                        AND le.operation = 'ROLLBACK'
+                      ORDER BY le.id DESC
+                      LIMIT 1
+                   )
+              LEFT JOIN transaction_log_entries start_entry
+                ON start_entry.id = (
+                     SELECT le.id
+                       FROM transaction_log_entries le
+                      WHERE le.transaction_id = tx.transaction_id
+                        AND le.operation = 'START'
+                      ORDER BY le.id ASC
+                      LIMIT 1
+                   )
+             ORDER BY COALESCE(tx.ended_at, tx.started_at) DESC, tx.transaction_id DESC
+             LIMIT #{limit} OFFSET #{offset}
+            """)
+    List<Map<String, Object>> listTransactionSummaries(@Param("limit") int limit,
+                                                       @Param("offset") int offset);
+
+    @Select("SELECT COUNT(*) FROM backup_records")
+    long countBackupRecords();
+
+    @Select("""
+            SELECT br.id,
+                   br.database_name AS databaseName,
+                   br.file_name AS fileName,
+                   br.backup_directory AS backupDirectory,
+                   br.file_size_bytes AS fileSizeBytes,
+                   br.status,
+                   br.trigger_type AS triggerType,
+                   br.created_by AS createdBy,
+                   creator.display_name AS createdByName,
+                   br.started_at AS startedAt,
+                   br.ended_at AS endedAt,
+                   br.message
+              FROM backup_records br
+              LEFT JOIN users creator ON creator.id = br.created_by
+             ORDER BY br.started_at DESC, br.id DESC
+             LIMIT #{limit} OFFSET #{offset}
+            """)
+    List<Map<String, Object>> listBackupRecords(@Param("limit") int limit,
+                                                @Param("offset") int offset);
 }

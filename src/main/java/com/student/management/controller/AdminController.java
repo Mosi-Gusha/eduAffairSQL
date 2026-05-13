@@ -14,6 +14,7 @@ import com.student.management.dto.TeacherRequest;
 import com.student.management.security.RequireRole;
 import com.student.management.security.SessionUser;
 import com.student.management.service.AdminService;
+import com.student.management.service.BackupService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -30,9 +31,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequireRole("admin")
 public class AdminController {
     private final AdminService adminService;
+    private final BackupService backupService;
 
-    public AdminController(AdminService adminService) {
+    public AdminController(AdminService adminService, BackupService backupService) {
         this.adminService = adminService;
+        this.backupService = backupService;
     }
 
     @GetMapping("/users")
@@ -209,19 +212,21 @@ public class AdminController {
     }
 
     @PostMapping("/teaching/select")
-    public ApiResponse<Map<String, Object>> adminSelectCourse(@RequestBody Map<String, Object> body) {
+    public ApiResponse<Map<String, Object>> adminSelectCourse(SessionUser user, @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(adminService.adminSelectCourse(
+                user,
                 String.valueOf(body.get("studentNo")),
                 Long.valueOf(String.valueOf(body.get("offeringId")))
         ));
     }
 
     @PostMapping("/teaching/drop")
-    public ApiResponse<Map<String, Object>> adminDropCourse(@RequestBody Map<String, Object> body) {
+    public ApiResponse<Map<String, Object>> adminDropCourse(SessionUser user, @RequestBody Map<String, Object> body) {
         if (body.get("enrollmentId") != null) {
-            return ApiResponse.ok(adminService.adminDropEnrollment(Long.valueOf(String.valueOf(body.get("enrollmentId")))));
+            return ApiResponse.ok(adminService.adminDropEnrollment(user, Long.valueOf(String.valueOf(body.get("enrollmentId")))));
         }
         return ApiResponse.ok(adminService.adminDropCourse(
+                user,
                 String.valueOf(body.get("studentNo")),
                 Long.valueOf(String.valueOf(body.get("offeringId")))
         ));
@@ -246,5 +251,22 @@ public class AdminController {
     @DeleteMapping("/notices/{noticeId}")
     public ApiResponse<Map<String, Object>> deleteNotice(@PathVariable Long noticeId) {
         return ApiResponse.ok(adminService.deleteNotice(noticeId));
+    }
+
+    @GetMapping("/logs")
+    public ApiResponse<Map<String, Object>> logs(@RequestParam(defaultValue = "1") Integer page,
+                                                 @RequestParam(defaultValue = "10") Integer pageSize) {
+        return ApiResponse.ok(adminService.transactionLogs(page, pageSize));
+    }
+
+    @GetMapping("/backups")
+    public ApiResponse<Map<String, Object>> backups(@RequestParam(defaultValue = "1") Integer page,
+                                                    @RequestParam(defaultValue = "10") Integer pageSize) {
+        return ApiResponse.ok(backupService.backupRecords(page, pageSize));
+    }
+
+    @PostMapping("/backups/run")
+    public ApiResponse<Map<String, Object>> runBackup(SessionUser user) {
+        return ApiResponse.ok(backupService.runManualBackup(user));
     }
 }

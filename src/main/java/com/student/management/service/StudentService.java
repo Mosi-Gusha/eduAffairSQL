@@ -11,7 +11,6 @@ import com.student.management.mapper.CommonMapper;
 import com.student.management.mapper.StudentMapper;
 import com.student.management.security.SessionUser;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class StudentService {
@@ -65,30 +64,15 @@ public class StudentService {
         });
     }
 
-    @Transactional
     public Map<String, Object> selectCourse(SessionUser user, Long offeringId) {
-        if (!selectionOpen()) {
-            throw new ApiException(400, "当前未开放选课，学生不能选课");
-        }
-        studentMapper.callSelectCourse(studentId(user), offeringId);
+        studentMapper.callSelectCourse(studentId(user), offeringId, user.id());
         clearTeachingCaches();
         return AdminService.message("选课成功");
     }
 
-    @Transactional
     public Map<String, Object> dropCourse(SessionUser user, Long enrollmentId) {
-        if (!selectionOpen()) {
-            throw new ApiException(400, "当前未开放选课，学生不能退课");
-        }
-        // Check if this course has already been graded
-        if (studentMapper.isEnrollmentGraded(enrollmentId)) {
-            throw new ApiException(400, "该课程已被教师登分，不能退课");
-        }
-        int updated = studentMapper.dropCourse(studentId(user), enrollmentId);
+        studentMapper.callStudentDropCourse(studentId(user), enrollmentId, user.id());
         clearTeachingCaches();
-        if (updated == 0) {
-            throw new ApiException(400, "未找到可退选课程");
-        }
         return AdminService.message("退课成功");
     }
 
@@ -134,7 +118,4 @@ public class StudentService {
         return AdminService.attachOfferingTimes(rows, times, idKey);
     }
 
-    private boolean selectionOpen() {
-        return commonMapper.selectionSemester() != null;
-    }
 }

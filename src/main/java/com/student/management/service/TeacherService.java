@@ -12,7 +12,6 @@ import com.student.management.mapper.CommonMapper;
 import com.student.management.mapper.TeacherMapper;
 import com.student.management.security.SessionUser;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class TeacherService {
@@ -76,23 +75,10 @@ public class TeacherService {
                 () -> teacherMapper.gradeRoster(teacherId, offeringId));
     }
 
-    @Transactional
     public Map<String, Object> saveGrade(SessionUser user, GradeRequest request) {
-        Map<String, Object> row = ensureOwner(user, request.enrollmentId());
-        if (!MapUtil.booleanValue(row, "gradingOpen")) {
-            throw new ApiException(400, "当前未开放该学期登分，不能保存成绩");
-        }
-        teacherMapper.upsertGrade(request.enrollmentId(), request.usualScore(), request.examScore(), user.id());
+        teacherMapper.callSaveGrade(teacherId(user), request.enrollmentId(), request.usualScore(), request.examScore(), user.id());
         clearTeachingCaches();
         return AdminService.message("成绩已保存");
-    }
-
-    private Map<String, Object> ensureOwner(SessionUser user, Long enrollmentId) {
-        Map<String, Object> row = teacherMapper.enrollmentOwner(enrollmentId);
-        if (row == null || MapUtil.longValue(row, "teacherId") != teacherId(user)) {
-            throw new ApiException(403, "无权操作该学生记录");
-        }
-        return row;
     }
 
     private Long teacherId(SessionUser user) {

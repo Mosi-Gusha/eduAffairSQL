@@ -1256,6 +1256,10 @@ tbody tr:last-child td {
   width: 240px;
 }
 
+.col-message {
+  width: 300px;
+}
+
 .col-semester-action,
 .col-phase-action {
   width: 138px;
@@ -1287,6 +1291,10 @@ tbody tr:last-child td {
 
 .table-wrap table:has(.col-score) {
   min-width: 1240px;
+}
+
+.table-wrap table:has(.col-message) {
+  min-width: 1320px;
 }
 
 .pager {

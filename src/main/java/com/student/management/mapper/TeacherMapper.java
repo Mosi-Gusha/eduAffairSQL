@@ -3,10 +3,11 @@ package com.student.management.mapper;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.mapping.StatementType;
 
 @Mapper
 public interface TeacherMapper {
@@ -30,6 +31,7 @@ public interface TeacherMapper {
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
              WHERE co.teacher_id = #{teacherId}
+               AND co.status != 'deleted'
              ORDER BY s.start_date DESC, co.id
             """)
     List<Map<String, Object>> courses(@Param("teacherId") Long teacherId);
@@ -54,6 +56,7 @@ public interface TeacherMapper {
               JOIN teachers t ON t.id = co.teacher_id
               JOIN users u ON u.id = t.user_id
              WHERE co.teacher_id = #{teacherId}
+               AND co.status != 'deleted'
                AND s.id = (
             """ + CommonMapper.CURRENT_SEMESTER_ID_SQL + """
                    )
@@ -82,6 +85,7 @@ public interface TeacherMapper {
               LEFT JOIN enrollments e ON e.offering_id = co.id AND e.status = 'selected'
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE co.teacher_id = #{teacherId}
+               AND co.status != 'deleted'
              GROUP BY co.id, co.capacity, co.selected_count, co.status, c.code, c.name, c.credit,
                       s.id, s.name, s.start_date, s.end_date
              ORDER BY s.start_date DESC, co.id
@@ -100,7 +104,10 @@ public interface TeacherMapper {
               JOIN departments d ON d.id = m.department_id
               JOIN course_offerings co ON co.id = e.offering_id
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
-             WHERE e.offering_id = #{offeringId} AND co.teacher_id = #{teacherId} AND e.status = 'selected'
+             WHERE e.offering_id = #{offeringId}
+               AND co.teacher_id = #{teacherId}
+               AND co.status != 'deleted'
+               AND e.status = 'selected'
              ORDER BY s.student_no
             """)
     List<Map<String, Object>> roster(@Param("teacherId") Long teacherId, @Param("offeringId") Long offeringId);
@@ -122,40 +129,17 @@ public interface TeacherMapper {
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.offering_id = #{offeringId}
                AND co.teacher_id = #{teacherId}
+               AND co.status != 'deleted'
                AND e.status = 'selected'
              ORDER BY s.student_no
             """)
     List<Map<String, Object>> gradeRoster(@Param("teacherId") Long teacherId, @Param("offeringId") Long offeringId);
 
-    @Select("""
-            SELECT co.teacher_id AS teacherId,
-                   grading_phase.semester_id IS NOT NULL AS gradingOpen,
-                   CASE
-                     WHEN CURDATE() < sem.start_date THEN 'not_started'
-                     WHEN CURDATE() BETWEEN sem.start_date AND sem.end_date THEN 'active'
-                     ELSE 'archived'
-                   END AS semesterStatus,
-                   g.final_score AS finalScore
-              FROM enrollments e
-              JOIN course_offerings co ON co.id = e.offering_id
-              JOIN semesters sem ON sem.id = co.semester_id
-              LEFT JOIN semester_active_phases grading_phase
-                ON grading_phase.semester_id = sem.id AND grading_phase.phase = 'grading'
-              LEFT JOIN grade_results g ON g.enrollment_id = e.id
-             WHERE e.id = #{enrollmentId}
-               AND e.status = 'selected'
-            """)
-    Map<String, Object> enrollmentOwner(@Param("enrollmentId") Long enrollmentId);
-
-    @Insert("""
-            INSERT INTO grades(enrollment_id, usual_score, exam_score, updated_by)
-            VALUES(#{enrollmentId}, #{usualScore}, #{examScore}, #{userId})
-            ON DUPLICATE KEY UPDATE usual_score = VALUES(usual_score),
-                                    exam_score = VALUES(exam_score),
-                                    updated_by = VALUES(updated_by)
-            """)
-    int upsertGrade(@Param("enrollmentId") Long enrollmentId, @Param("usualScore") Double usualScore,
-                    @Param("examScore") Double examScore, @Param("userId") Long userId);
+    @Select("{ CALL sp_save_grade(#{teacherId, mode=IN, jdbcType=BIGINT}, #{enrollmentId, mode=IN, jdbcType=BIGINT}, #{usualScore, mode=IN, jdbcType=DECIMAL}, #{examScore, mode=IN, jdbcType=DECIMAL}, #{userId, mode=IN, jdbcType=BIGINT}) }")
+    @Options(statementType = StatementType.CALLABLE)
+    void callSaveGrade(@Param("teacherId") Long teacherId, @Param("enrollmentId") Long enrollmentId,
+                       @Param("usualScore") Double usualScore, @Param("examScore") Double examScore,
+                       @Param("userId") Long userId);
 
     @Select("""
             SELECT COUNT(DISTINCT co.id) AS offeringCount,
@@ -165,6 +149,7 @@ public interface TeacherMapper {
               LEFT JOIN enrollments e ON e.offering_id = co.id AND e.status = 'selected'
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE co.teacher_id = #{teacherId}
+               AND co.status != 'deleted'
             """)
     Map<String, Object> dashboard(@Param("teacherId") Long teacherId);
 
@@ -181,6 +166,7 @@ public interface TeacherMapper {
               LEFT JOIN grade_results g ON g.enrollment_id = e.id
              WHERE e.offering_id = #{offeringId}
                AND co.teacher_id = #{teacherId}
+               AND co.status != 'deleted'
                AND e.status = 'selected'
             """)
     Map<String, Object> courseGradeStats(@Param("teacherId") Long teacherId, @Param("offeringId") Long offeringId);

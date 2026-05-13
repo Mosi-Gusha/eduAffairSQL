@@ -4,6 +4,7 @@ import java.util.Collections;
 import java.util.Map;
 
 import com.student.management.common.ApiException;
+import com.student.management.common.BusinessTransaction;
 import com.student.management.common.MapUtil;
 import com.student.management.common.PasswordUtil;
 import com.student.management.dto.LoginRequest;
@@ -18,10 +19,12 @@ import org.springframework.stereotype.Service;
 public class AuthService {
     private final AuthMapper authMapper;
     private final SessionRegistry sessionRegistry;
+    private final TransactionAuditService auditService;
 
-    public AuthService(AuthMapper authMapper, SessionRegistry sessionRegistry) {
+    public AuthService(AuthMapper authMapper, SessionRegistry sessionRegistry, TransactionAuditService auditService) {
         this.authMapper = authMapper;
         this.sessionRegistry = sessionRegistry;
+        this.auditService = auditService;
     }
 
     public LoginResponse login(LoginRequest request) {
@@ -64,6 +67,7 @@ public class AuthService {
         }
     }
 
+    @BusinessTransaction(businessType = "change_password", operation = "UPDATE", tableName = "users", recordIdArgIndex = 0)
     public Map<String, Object> changePassword(SessionUser user, ChangePasswordRequest request) {
         String currentHash = authMapper.passwordHashByUserId(user.id());
         if (!PasswordUtil.matches(request.oldPassword(), currentHash)) {
@@ -73,6 +77,7 @@ public class AuthService {
             throw new ApiException(400, "新密码长度不能少于 2 位");
         }
         authMapper.updatePassword(user.id(), PasswordUtil.hash(request.newPassword()));
+        auditService.logStep("UPDATE", "users", user.id(), "success", "password_hash");
         return Map.of("message", "密码已修改，请重新登录");
     }
 }
